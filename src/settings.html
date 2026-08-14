@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>ALYA — Configuración</title>
+    <style>
+        :root {
+            --bg: #0a0e14;
+            --panel: #121821;
+            --panel-border: #202b38;
+            --pink: #ff5ea8;
+            --cyan: #4fd1ff;
+            --text: #e4edf5;
+            --dim: #6c7c8c;
+            --mono: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background:
+                linear-gradient(rgba(79, 209, 255, 0.035) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(79, 209, 255, 0.035) 1px, transparent 1px),
+                var(--bg);
+            background-size: 22px 22px, 22px 22px, auto;
+            color: var(--text);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            padding: 0 0 20px;
+        }
+
+        header {
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--panel-border);
+            background: linear-gradient(180deg, rgba(255, 94, 168, 0.06), rgba(79, 209, 255, 0.03) 60%, transparent);
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            margin-bottom: 20px;
+        }
+
+        .brand-mark {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            background: conic-gradient(from 200deg, var(--pink), var(--cyan), var(--pink));
+            padding: 2px;
+            flex-shrink: 0;
+            box-shadow: 0 0 12px rgba(79, 209, 255, 0.4);
+        }
+
+        .brand-mark img {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+            display: block;
+        }
+
+        header h1 {
+            font-size: 13px;
+            letter-spacing: 3px;
+            margin: 0;
+            font-weight: 700;
+            background: linear-gradient(90deg, var(--pink), var(--cyan));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 0 5px rgba(79, 209, 255, 0.35));
+        }
+
+        header .subtitle {
+            font-size: 9px;
+            letter-spacing: 1.5px;
+            color: var(--dim);
+            text-transform: uppercase;
+            margin-top: 1px;
+        }
+
+        .content {
+            padding: 0 20px;
+        }
+
+        .field {
+            margin-bottom: 18px;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            color: var(--dim);
+            margin-bottom: 6px;
+        }
+
+        input[type="text"],
+        select {
+            width: 100%;
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 9px 12px;
+            font-size: 13px;
+            outline: none;
+            font-family: inherit;
+        }
+
+        input[type="text"]:focus,
+        select:focus {
+            border-color: var(--cyan);
+        }
+
+        .radio-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .radio-row label {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            padding: 9px 0;
+            cursor: pointer;
+            color: var(--text);
+            font-size: 13px;
+            margin: 0;
+        }
+
+        .radio-row input {
+            accent-color: var(--cyan);
+        }
+
+        .radio-row label:has(input:checked) {
+            border-color: var(--cyan);
+        }
+
+        .slider-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        input[type="range"] {
+            flex: 1;
+            accent-color: var(--cyan);
+        }
+
+        .slider-value {
+            font-size: 12px;
+            color: var(--text);
+            width: 36px;
+            text-align: right;
+            font-family: var(--mono);
+        }
+
+        #save-btn {
+            width: 100%;
+            background: linear-gradient(135deg, var(--pink), var(--cyan));
+            color: #0a0e14;
+            border: none;
+            border-radius: 8px;
+            padding: 11px 0;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+
+        #save-btn:active {
+            transform: scale(0.98);
+        }
+
+        #status-msg {
+            text-align: center;
+            font-size: 12px;
+            color: var(--cyan);
+            height: 16px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class="brand-mark"><img class="avatar-img" src="../build/avatar.png" alt="ALYA" /></div>
+        <div>
+            <h1>CONFIGURACIÓN</h1>
+            <div class="subtitle">Ajustes de ALYA</div>
+        </div>
+    </header>
+
+    <div class="content">
+        <div class="field">
+            <label for="userName">Tu nombre</label>
+            <input type="text" id="userName" placeholder="Andrés" />
+        </div>
+
+        <div class="field">
+            <label for="lengthScale">Velocidad al hablar</label>
+            <div class="slider-row">
+                <input type="range" id="lengthScale" min="0.8" max="1.6" step="0.05" />
+                <span class="slider-value" id="lengthScaleValue"></span>
+            </div>
+        </div>
+
+        <div class="field">
+            <label for="noiseScale">Expresividad (entonación)</label>
+            <div class="slider-row">
+                <input type="range" id="noiseScale" min="0.4" max="1.0" step="0.05" />
+                <span class="slider-value" id="noiseScaleValue"></span>
+            </div>
+        </div>
+
+        <div class="field">
+            <label for="noiseW">Precisión de pronunciación</label>
+            <div class="slider-row">
+                <input type="range" id="noiseW" min="0.4" max="1.0" step="0.05" />
+                <span class="slider-value" id="noiseWValue"></span>
+            </div>
+        </div>
+
+        <button id="save-btn">Guardar cambios</button>
+        <div id="status-msg"></div>
+    </div>
+
+    <script>
+        window.alya.getAvatarUrl().then((url) => {
+            document.querySelectorAll('.avatar-img').forEach((img) => (img.src = url));
+        });
+
+        const userNameInput = document.getElementById('userName');
+        const lengthScaleInput = document.getElementById('lengthScale');
+        const noiseScaleInput = document.getElementById('noiseScale');
+        const noiseWInput = document.getElementById('noiseW');
+        const lengthScaleValue = document.getElementById('lengthScaleValue');
+        const noiseScaleValue = document.getElementById('noiseScaleValue');
+        const noiseWValue = document.getElementById('noiseWValue');
+        const saveBtn = document.getElementById('save-btn');
+        const statusMsg = document.getElementById('status-msg');
+
+        function updateSliderLabels() {
+            lengthScaleValue.textContent = parseFloat(lengthScaleInput.value).toFixed(2);
+            noiseScaleValue.textContent = parseFloat(noiseScaleInput.value).toFixed(2);
+            noiseWValue.textContent = parseFloat(noiseWInput.value).toFixed(2);
+        }
+
+        async function loadCurrentSettings() {
+            const settings = await window.alya.getSettings();
+            userNameInput.value = settings.userName;
+            lengthScaleInput.value = settings.lengthScale;
+            noiseScaleInput.value = settings.noiseScale;
+            noiseWInput.value = settings.noiseW;
+            updateSliderLabels();
+        }
+
+        lengthScaleInput.addEventListener('input', updateSliderLabels);
+        noiseScaleInput.addEventListener('input', updateSliderLabels);
+        noiseWInput.addEventListener('input', updateSliderLabels);
+
+        saveBtn.addEventListener('click', async () => {
+            const settings = {
+                userName: userNameInput.value.trim() || 'Andrés',
+                lengthScale: parseFloat(lengthScaleInput.value),
+                noiseScale: parseFloat(noiseScaleInput.value),
+                noiseW: parseFloat(noiseWInput.value),
+            };
+
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Guardando...';
+
+            await window.alya.saveSettings(settings);
+
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Guardar cambios';
+            statusMsg.textContent = '✓ Guardado — se aplica desde tu próximo mensaje';
+            setTimeout(() => (statusMsg.textContent = ''), 3000);
+        });
+
+        loadCurrentSettings();
+    </script>
+</body>
+
+</html>

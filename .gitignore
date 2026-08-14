@@ -1,0 +1,13 @@
+# Nunca subir esto a ningún lado
+.env
+.env.local
+node_modules/
+out/
+dist/
+piper/
+*.log
+*.tsbuildinfo
+
+# Basura del sistema
+.DS_Store
+Thumbs.db

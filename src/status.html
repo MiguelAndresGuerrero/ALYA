@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>ALYA — Estado</title>
+<style>
+  :root {
+    --bg: #0a0e14;
+    --panel: #121821;
+    --panel-border: #202b38;
+    --pink: #ff5ea8;
+    --cyan: #4fd1ff;
+    --text: #e4edf5;
+    --dim: #6c7c8c;
+    --mono: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background:
+      linear-gradient(rgba(79,209,255,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(79,209,255,0.035) 1px, transparent 1px),
+      var(--bg);
+    background-size: 22px 22px, 22px 22px, auto;
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    padding: 0 0 18px;
+    overflow-x: hidden;
+  }
+
+  .hud-corners { position: relative; }
+  .hud-corners::before, .hud-corners::after {
+    content: '';
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    pointer-events: none;
+    opacity: 0.7;
+  }
+  .hud-corners::before {
+    top: -1px; left: -1px;
+    border-top: 2px solid var(--cyan);
+    border-left: 2px solid var(--cyan);
+  }
+  .hud-corners::after {
+    bottom: -1px; right: -1px;
+    border-bottom: 2px solid var(--pink);
+    border-right: 2px solid var(--pink);
+  }
+
+  header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--panel-border);
+    background: linear-gradient(180deg, rgba(255,94,168,0.06), rgba(79,209,255,0.03) 60%, transparent);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 16px;
+  }
+  .brand-mark {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: conic-gradient(from 200deg, var(--pink), var(--cyan), var(--pink));
+    padding: 2px;
+    flex-shrink: 0;
+    box-shadow: 0 0 12px rgba(79,209,255,0.4);
+  }
+  .brand-mark img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+  }
+  header h1 {
+    font-size: 13px;
+    letter-spacing: 3px;
+    margin: 0;
+    font-weight: 700;
+    background: linear-gradient(90deg, var(--pink), var(--cyan));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 0 5px rgba(79,209,255,0.35));
+  }
+  header .subtitle {
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-top: 1px;
+    font-family: var(--mono);
+  }
+
+  .content { padding: 0 18px; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-left: 2px solid var(--cyan);
+    border-radius: 10px;
+    padding: 13px 15px;
+    margin-bottom: 10px;
+    position: relative;
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    padding: 3px 0;
+  }
+  .label {
+    color: var(--dim);
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .value {
+    color: var(--text);
+    font-weight: 600;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    font-family: var(--mono);
+  }
+  .bar-bg {
+    background: #1c2530;
+    border-radius: 4px;
+    height: 6px;
+    margin-top: 4px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    background: linear-gradient(90deg, var(--pink), var(--cyan));
+    height: 100%;
+    transition: width 0.4s ease;
+  }
+  .section-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--dim);
+    margin-bottom: 7px;
+  }
+  button {
+    background: linear-gradient(135deg, var(--pink), var(--cyan));
+    color: #0a0e14;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 8px;
+    width: 100%;
+    transition: transform 0.1s, opacity 0.15s;
+  }
+  button:hover:not(:disabled) { transform: scale(1.01); }
+  button:disabled {
+    opacity: 0.45;
+    cursor: default;
+    transform: none;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand-mark"><img class="avatar-img" src="../build/avatar.png" alt="ALYA" /></div>
+    <div>
+      <h1>ALYA</h1>
+      <div class="subtitle">Estado del sistema</div>
+    </div>
+  </header>
+
+  <div class="content">
+  <div class="card hud-corners" id="cpu-block">Cargando...</div>
+  <div class="card hud-corners" id="ram-block"></div>
+  <div class="card hud-corners">
+    <div class="section-title">Procesos con más consumo</div>
+    <div id="processes-block"><div class="row"><span class="label">Consulta pesada — apriétame solo si la necesitas</span></div></div>
+    <button id="load-processes-btn">Ver procesos</button>
+  </div>
+  <div class="card hud-corners">
+    <div class="section-title">Red</div>
+    <div id="network-block"><div class="row"><span class="label">Latencia sin medir</span></div></div>
+    <button id="load-network-btn">Medir latencia</button>
+  </div>
+  <div class="card hud-corners">
+    <div class="section-title">Proyectos</div>
+    <div id="projects-block"><div class="row"><span class="label">Sin proyectos en seguimiento todavía</span></div></div>
+  </div>
+  </div>
+
+  <script>
+    // Igual que en el chat: la ruta relativa solo funciona en desarrollo.
+    window.alya.getAvatarUrl().then((url) => {
+      document.querySelectorAll('.avatar-img').forEach((img) => (img.src = url));
+    });
+
+    function renderQuick(s) {
+      const cpuBlock = document.getElementById('cpu-block');
+      const ramBlock = document.getElementById('ram-block');
+
+      cpuBlock.innerHTML = `
+        <div class="section-title">CPU</div>
+        <div class="row"><span class="label">${s.cpu.model}</span><span class="value">${s.cpu.loadPercent}%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:${s.cpu.loadPercent}%"></div></div>
+      `;
+      ramBlock.innerHTML = `
+        <div class="section-title">RAM</div>
+        <div class="row"><span class="label">Usado</span><span class="value">${s.ram.usedPercent}% de ${s.ram.totalGB} GB</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:${s.ram.usedPercent}%"></div></div>
+      `;
+    }
+
+    // CPU/RAM/GPU/Disco: barato, main.ts lo empuja solo mientras esta
+    // ventana está visible (ver main.ts, eventos show/hide). Aprovechamos
+    // este mismo ciclo para refrescar Proyectos también (lectura de
+    // archivo local, prácticamente gratis).
+    window.alya.onStatusUpdate((s) => {
+      renderQuick(s);
+      loadProjects();
+    });
+
+    // Procesos: CARO en Windows (puede tardar varios segundos), así que
+    // NUNCA se pide automático — solo cuando el usuario aprieta el botón.
+    const btn = document.getElementById('load-processes-btn');
+    const processesBlock = document.getElementById('processes-block');
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Consultando... (puede tardar unos segundos)';
+      processesBlock.innerHTML = '<div class="row"><span class="label">Consultando...</span></div>';
+
+      const procs = await window.alya.getTopProcesses();
+
+      if (!procs) {
+        processesBlock.innerHTML = '<div class="row"><span class="label">Ya había una consulta en camino, intenta de nuevo</span></div>';
+      } else {
+        processesBlock.innerHTML = procs
+          .map(p => `<div class="row"><span class="label">${p.name}</span><span class="value">${p.memPercent}% RAM</span></div>`)
+          .join('');
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Actualizar procesos';
+    });
+
+    // Red: también bajo demanda (el ping real tarda ~1 segundo).
+    const networkBtn = document.getElementById('load-network-btn');
+    const networkBlock = document.getElementById('network-block');
+
+    networkBtn.addEventListener('click', async () => {
+      networkBtn.disabled = true;
+      networkBtn.textContent = 'Midiendo...';
+      networkBlock.innerHTML = '<div class="row"><span class="label">Midiendo...</span></div>';
+
+      const latencia = await window.alya.getNetworkLatency();
+
+      if (latencia === null) {
+        networkBlock.innerHTML = '<div class="row"><span class="label">Sin respuesta (¿sin internet?)</span></div>';
+      } else {
+        networkBlock.innerHTML = `<div class="row"><span class="label">Latencia</span><span class="value">${latencia} ms</span></div>`;
+      }
+
+      networkBtn.disabled = false;
+      networkBtn.textContent = 'Medir latencia';
+    });
+
+    // Proyectos: barato (solo lee un archivo local), se carga solo cada
+    // vez que se abre el panel, junto con CPU/RAM.
+    async function loadProjects() {
+      const projectsBlock = document.getElementById('projects-block');
+      const proyectos = await window.alya.getProjects();
+
+      if (proyectos.length === 0) {
+        projectsBlock.innerHTML = '<div class="row"><span class="label">Sin proyectos en seguimiento todavía</span></div>';
+        return;
+      }
+
+      projectsBlock.innerHTML = proyectos
+        .map(
+          (p) => `
+            <div class="row"><span class="label">${p.nombre}</span><span class="value">${p.progreso}% — ${p.estado}</span></div>
+            <div class="bar-bg"><div class="bar-fill" style="width:${p.progreso}%"></div></div>
+          `
+        )
+        .join('');
+    }
+  </script>
+</body>
+</html>
