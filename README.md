@@ -60,10 +60,6 @@ ALYA/
 │   ├── chat.html                   Ventana de chat
 │   ├── status.html                   Panel de estado / centro de información
 │   ├── settings.html                   Panel de configuración
-│   └── (imageGen, webBrowser, kickChat, obsOverlay, security,
-│        devTools, reminders, routines, memoryStore, projectsStore,
-│        songId, screenCapture, mediaControl, fileTools, appLauncher,
-│        systemTools, resourceCleanup, settingsStore, resourcePaths...)
 ├── out/                    ← generado por el build, NO editar a mano
 ├── piper/                  ← motor de voz (NO incluido en el repo, ver abajo)
 ├── build/
@@ -110,6 +106,8 @@ GEMINI_API_KEY=tu_key_de_gemini            (obligatoria — aistudio.google.com,
 AUDD_API_TOKEN=tu_token_de_audd            (opcional — identificar canciones, dashboard.audd.io)
 KICK_CHATROOM_ID=tu_chatroom_id            (opcional — reaccionar al chat de Kick)
 
+ANTHROPIC_API_KEY=                         (para cuando subas a la versión de pago)
+OPENAI_API_KEY=                            (ídem)
 ```
 
 ## Piper (voz) — no incluido en el repo
@@ -124,3 +122,17 @@ KICK_CHATROOM_ID=tu_chatroom_id            (opcional — reaccionar al chat de K
 
 Sin esto, ALYA sigue funcionando pero usa la voz robótica de Windows (SAPI)
 como respaldo automático.
+
+## Reglas de oro
+
+- Edita solo `src/` — nunca `out/` (se regenera y se borra cada build).
+- Cada cambio de código necesita `npm start` / `npm run build` de nuevo.
+- Nunca subas tu `.env` real a ningún lado — está en `.gitignore` a propósito.
+
+## Roadmap / lo que queda pendiente
+
+- Sistema de agentes especializados (ej. un bot de Discord con identidad
+  propia — decidimos no hacerlo por los riesgos de automatizar cuentas
+  personales, pero un bot legítimo sigue siendo una opción)
+- Herramientas específicas de Minecraft (logs, mods)
+- Subir a la versión de pago (Claude + DALL-E) en vez de Gemini + Pollinations
