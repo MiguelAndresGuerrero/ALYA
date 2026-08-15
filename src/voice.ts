@@ -45,6 +45,26 @@ function toSpeechText(text: string): string {
   });
 }
 
+/**
+ * Lee cuánto dura de verdad un archivo .wav, leyendo su encabezado
+ * (formato RIFF/WAVE estándar) — así el límite de tiempo de espera se
+ * ajusta al audio real, en vez de un número fijo que corta textos largos
+ * a la mitad.
+ */
+function getWavDurationSeconds(wavPath: string): number | null {
+  try {
+    const buffer = fs.readFileSync(wavPath);
+    // Encabezado WAV estándar: byteRate en la posición 28 (4 bytes), tamaño
+    // de los datos de audio en la posición 40 (4 bytes) — ver especificación RIFF/WAVE.
+    const byteRate = buffer.readUInt32LE(28);
+    const dataSize = buffer.readUInt32LE(40);
+    if (byteRate === 0) return null;
+    return dataSize / byteRate;
+  } catch {
+    return null; // si algo falla leyendo el encabezado, seguimos con el valor por defecto
+  }
+}
+
 function speakWithPiper(text: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const settings = loadSettings();
@@ -78,14 +98,20 @@ function playWav(wavPath: string): Promise<void> {
     const script = `(New-Object Media.SoundPlayer '${wavPath}').PlaySync()`;
     const ps = spawn('powershell', ['-NoProfile', '-Command', script]);
 
-    // Salvaguarda contra un proceso REALMENTE colgado (no contra una
-    // respuesta larga que tarda en reproducirse — con la cola de voz ya
-    // no debería haber competencia por el dispositivo de audio, así que
-    // este límite puede ser generoso sin riesgo).
+    // El límite de esperas se ajusta a la duración REAL del audio (leída
+    // del propio archivo .wav) más un margen generoso — así un texto
+    // largo nunca se corta a la mitad. Si no se puede leer la duración
+    // por algún motivo, usamos 60s como respaldo razonable.
+    const duracionReal = getWavDurationSeconds(wavPath);
+    const margenSegundos = 20;
+    const timeoutMs = duracionReal
+      ? Math.max(60000, (duracionReal + margenSegundos) * 1000)
+      : 60000;
+
     const timeout = setTimeout(() => {
       ps.kill();
-      reject(new Error('Se mató un proceso de audio colgado (timeout de 60s).'));
-    }, 60000);
+      reject(new Error(`Se mató un proceso de audio colgado (timeout de ${Math.round(timeoutMs / 1000)}s).`));
+    }, timeoutMs);
 
     ps.on('error', (err) => {
       clearTimeout(timeout);
@@ -113,12 +139,17 @@ function speakFallback(text: string): Promise<void> {
       stdio: ['pipe', 'ignore', 'pipe'],
     });
 
-    // Ídem: 60s en vez de 10s, ya no hace falta ser tan agresivo con la
-    // cola de voz previniendo solapamientos.
+    // Acá no hay un archivo de audio que medir de antemano (SAPI genera
+    // sobre la marcha) — estimamos el tiempo según la longitud del texto
+    // (~12 caracteres por segundo a ritmo normal de habla), con margen.
+    const segundosEstimados = text.length / 12;
+    const margenSegundos = 20;
+    const timeoutMs = Math.max(60000, (segundosEstimados + margenSegundos) * 1000);
+
     const timeout = setTimeout(() => {
       ps.kill();
       resolve();
-    }, 60000);
+    }, timeoutMs);
 
     ps.on('error', (err) => {
       clearTimeout(timeout);
