@@ -39,7 +39,7 @@ function parseKickMessage(rawData: string): KickChatMessage | null {
 /**
  * Se conecta al chat en vivo de Kick (solo lectura, sin necesidad de
  * cuenta ni token) y llama a onPlayCommand cada vez que alguien escribe
- * "/play <algo>" en el chat.
+ * "!play <algo>" en el chat.
  */
 export function startKickChatListener(
     chatroomId: string,
@@ -78,7 +78,7 @@ export function startKickChatListener(
             const parsed = parseKickMessage(outer.data);
             if (!parsed) return;
 
-            const match = parsed.content.match(/^\/play\s+(.+)/i);
+            const match = parsed.content.match(/^!play\s+(.+)/i);
             if (match) {
                 onPlayCommand(match[1].trim(), parsed.username);
             }

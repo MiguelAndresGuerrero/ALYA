@@ -45,14 +45,9 @@
       "package.json"
     ],
     "extraResources": [
-      {
-        "from": "piper",
-        "to": "piper"
-      },
-      {
-        "from": "build",
-        "to": "build"
-      }
+      { "from": "piper", "to": "piper" },
+      { "from": "build", "to": "build" },
+      { "from": "extensions", "to": "extensions" }
     ]
   }
 }

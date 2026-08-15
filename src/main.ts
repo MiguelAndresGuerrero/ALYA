@@ -24,7 +24,9 @@ import { identifySong } from './songid';
 import { startReminderScheduler } from './reminders';
 import { loadSettings, saveSettings, type AlyaSettings } from './settingsStore';
 import { startKickChatListener } from './kickChat';
-import { queueOrPlaySong } from './webBrowser';
+import { startTwitchChatListener } from './twitchChat';
+import { startYouTubeChatListener } from './youtubeChat';
+import { queueOrPlaySong, initializePlayerSession } from './webBrowser';
 import { startOverlayServer } from './obsOverlay';
 import { loadProjects, type Project } from './projectsStore';
 import { getResourcePath } from './resourcePaths';
@@ -84,6 +86,7 @@ function createStatusWindow(): void {
     resizable: false,
     frame: true,
     title: 'ALYA',
+    icon: getResourcePath('build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -127,6 +130,7 @@ function createChatWindow(): void {
     resizable: true,
     frame: true,
     title: 'ALYA',
+    icon: getResourcePath('build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -179,6 +183,7 @@ function createSettingsWindow(): void {
     resizable: false,
     frame: true,
     title: 'ALYA — Configuración',
+    icon: getResourcePath('build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -269,6 +274,11 @@ if (!gotSingleInstanceLock) {
     startVoiceServer(); // arranca el proceso de voz persistente antes del saludo
     greet();
 
+    // Bloqueo de anuncios + extensiones sideloaded para la ventana de
+    // música — se prepara ANTES de que exista cualquier ventana, para
+    // que ya esté todo listo desde el primer video, no solo el segundo.
+    await initializePlayerSession();
+
     // Overlay para OBS: un servidor local mostrando "Sonando ahora: X".
     // Pega esta URL en una Fuente de navegador de OBS.
     const overlayPort = startOverlayServer();
@@ -283,22 +293,43 @@ if (!gotSingleInstanceLock) {
       speak(reminder.mensaje);
     });
 
-    // Integración con Kick: si configuraste KICK_CHATROOM_ID en el .env,
-    // ALYA escucha el chat en vivo y reacciona a "/play <canción>".
+    // Reacción a "!play <canción>" en el chat en vivo — misma lógica sin
+    // importar de qué plataforma venga. Ya no hay fila real (YouTube abre
+    // en el navegador real, fuera del control de ALYA) — cada pedido
+    // simplemente abre su propia pestaña.
+    async function handlePlayCommand(query: string, username: string, plataforma: string): Promise<void> {
+      console.log(`[${plataforma}] ${username} pidió: ${query}`);
+      try {
+        await queueOrPlaySong(query);
+        speak(`Abriendo "${query}", pedida por ${username}.`);
+      } catch {
+        speak(`No logré encontrar "${query}", pedida por ${username}.`);
+      }
+    }
+
+    // Kick: solo necesita el chatroom_id (número público de tu canal).
     const kickChatroomId = process.env.KICK_CHATROOM_ID;
     if (kickChatroomId) {
-      startKickChatListener(kickChatroomId, async (query, username) => {
-        console.log(`[Kick] ${username} pidió: ${query}`);
-        try {
-          const { playedNow, queuePosition } = await queueOrPlaySong(query);
-          const mensaje = playedNow
-            ? `Reproduciendo ahora: ${query}, pedida por ${username}.`
-            : `Canción agregada a la fila, posición ${queuePosition}: ${query}, pedida por ${username}.`;
-          speak(mensaje);
-        } catch {
-          speak(`No logré encontrar "${query}", pedida por ${username}.`);
-        }
-      });
+      startKickChatListener(kickChatroomId, (query, username) =>
+        handlePlayCommand(query, username, 'Kick')
+      );
+    }
+
+    // Twitch: solo necesita tu nombre de canal — lectura anónima, sin cuenta ni token.
+    const twitchChannel = process.env.TWITCH_CHANNEL;
+    if (twitchChannel) {
+      startTwitchChatListener(twitchChannel, (query, username) =>
+        handlePlayCommand(query, username, 'Twitch')
+      );
+    }
+
+    // YouTube: necesita tu channel_id y una API key de Google Cloud (gratis).
+    const youtubeChannelId = process.env.YOUTUBE_CHANNEL_ID;
+    const youtubeApiKey = process.env.YOUTUBE_API_KEY;
+    if (youtubeChannelId && youtubeApiKey) {
+      startYouTubeChatListener(youtubeChannelId, youtubeApiKey, (query, username) =>
+        handlePlayCommand(query, username, 'YouTube')
+      );
     }
 
     // Autorizar micrófono Y captura de pantalla/audio del sistema. Sin

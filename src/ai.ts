@@ -11,9 +11,11 @@ import { freeUpMemory } from './resourceCleanup';
 import { readFile, writeFile, listDirectory, runCommand, deleteFile, editFile } from './devTools';
 import { addReminder, cancelReminder, listReminders } from './reminders';
 import { loadSettings } from './settingsStore';
-import { openUrl, queueOrPlaySong } from './webBrowser';
+import { openUrl, queueOrPlaySong, playImmediately, getQueueState } from './webBrowser';
 import { loadProjects, upsertProject, deleteProject } from './projectsStore';
 import { getDefenderStatus, startQuickScan } from './security';
+import { startSpotifyAuth, searchAndPlaySpotify, isSpotifyConnected } from './spotify';
+import { findInstalledProgram, launchProgram } from './programSearch';
 import type { ChatMessage, PendingConfirmation } from './types';
 
 const MODEL = 'gemini-3.5-flash-lite'; // rápido, barato, ideal para un asistente personal
@@ -76,11 +78,42 @@ Recordatorios: usa crear_recordatorio cuando Andrés pida que le avises de
 algo en cierto tiempo o a cierta hora. Sobreviven a que cierre la app —
 si estaba cerrada cuando tocaba sonar, suena apenas la vuelva a abrir.
 
-Web: abrir_pagina_web abre en el navegador REAL de Andrés (con su sesión
-ya iniciada), no en una ventana aparte de ALYA — úsala también para
-búsquedas de Google normales. reproducir_youtube SÍ usa la ventana propia
-de ALYA (necesaria para la fila de reproducción) — úsala para pedidos
-tipo "pon X", "busca y reproduce X".
+Web: abrir_pagina_web y reproducir_youtube abren en el navegador REAL de
+Andrés (con su sesión ya iniciada), no en una ventana aparte de ALYA —
+úsala también para búsquedas de Google normales. reproducir_youtube ya
+NO tiene control de fila real (cada pedido abre su propia pestaña en el
+navegador) — agregar_a_fila y ver_fila ahora se comportan igual que
+reproducir_youtube, solo abren directo, sin encolar ni poder decir qué
+suena.
+
+Spotify: si Andrés pide reproducir algo Y menciona Spotify explícitamente,
+llama a reproducir_spotify DIRECTAMENTE — esa herramienta abre el
+reproductor web de Spotify sola si hace falta y espera lo necesario, no
+la adelantes con abrir_app "por si acaso". Si falla porque no está
+conectada, usa conectar_spotify y avísale que tiene que aprobar el acceso
+en el navegador que se le va a abrir. Si NO menciona Spotify, usa
+reproducir_youtube por defecto. Si pide "abre Spotify" sin pedir una
+canción específica, usa abrir_pagina_web con "https://open.spotify.com".
+
+Programas y juegos: para apps conocidas (Discord, Spotify, Steam, Chrome,
+VS Code) usa abrir_app. Para CUALQUIER OTRA cosa instalada — un juego
+específico, un programa que no está en esa lista (ej. OBS, WhatsApp,
+cualquier cosa) — usa buscar_programa primero (busca en los accesos
+directos del Menú Inicio, sin importar en qué disco esté instalado). Si
+encuentra un solo resultado, ábrelo directo con abrir_programa_encontrado.
+Si encuentra varios, pregúntale a Andrés cuál. Si no encuentra nada, dilo
+claramente — no inventes que lo abriste.
+
+PROHIBIDO TERMINANTE: nunca inventes, adivines, ni construyas una ruta de
+archivo o carpeta a mano para abrir algo — ni con variables de entorno
+(%LOCALAPPDATA%, etc.), ni con IDs/GUIDs de Windows, ni de ninguna otra
+forma, sin importar qué tan seguro te sientas de que es correcta. La
+ÚNICA fuente confiable de rutas es lo que buscar_programa te devuelve —
+si no tienes ese resultado en tus manos, no tienes la ruta, punto. Usar
+ejecutar_comando con una ruta inventada para "abrir" algo está
+terminantemente prohibido — esa herramienta es solo para tareas de
+terminal de verdad (builds, git, etc.), nunca para simplemente abrir
+programas.
 
 Proyectos: si Andrés te cuenta cómo va alguno de sus proyectos (ARGUS,
 GALYX, u otro), usa actualizar_proyecto para llevar el registro — esto
@@ -423,6 +456,81 @@ const escanearVirusDeclaration: FunctionDeclaration = {
     },
 };
 
+const conectarSpotifyDeclaration: FunctionDeclaration = {
+    name: 'conectar_spotify',
+    description:
+        'Inicia el proceso de conexión con la cuenta de Spotify de Andrés (abre su navegador ' +
+        'para que apruebe el acceso). Solo hace falta hacerlo una vez. Úsala si intenta usar ' +
+        'reproducir_spotify y falla porque no está conectado todavía.',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {},
+    },
+};
+
+const reproducirSpotifyDeclaration: FunctionDeclaration = {
+    name: 'reproducir_spotify',
+    description:
+        'Busca una canción y la reproduce DE VERDAD en el Spotify de Andrés (necesita Premium y ' +
+        'que Spotify esté abierto en algún dispositivo). Úsala SOLO cuando Andrés mencione ' +
+        'Spotify explícitamente — si no lo menciona, usa reproducir_youtube en su lugar.',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {
+            consulta: {
+                type: 'string',
+                description: 'Qué buscar y reproducir, ej. "Esclava Remix".',
+            },
+        },
+        required: ['consulta'],
+    },
+};
+
+const buscarProgramaDeclaration: FunctionDeclaration = {
+    name: 'buscar_programa',
+    description:
+        'Busca un programa, app, o juego INSTALADO en la PC (no importa en qué disco/carpeta ' +
+        'esté) — mira los accesos directos del Menú Inicio de Windows, que cubren prácticamente ' +
+        'todo lo instalado, incluyendo juegos de Steam/Epic/etc. Úsala para "abre X juego" o ' +
+        '"busca el programa X" cuando no sea una de las apps ya conocidas (abrir_app). Devuelve ' +
+        'la lista de coincidencias — si hay una sola, ábrela directo con la ruta que te da.',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {
+            nombre: {
+                type: 'string',
+                description: 'Nombre (o parte del nombre) del programa/juego a buscar.',
+            },
+        },
+        required: ['nombre'],
+    },
+};
+
+const abrirProgramaEncontradoDeclaration: FunctionDeclaration = {
+    name: 'abrir_programa_encontrado',
+    description:
+        'Abre un programa/juego/app que ya encontraste con buscar_programa, usando los datos ' +
+        'exactos (nombre, appId, esAppDeStore) que te devolvió esa búsqueda.',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {
+            nombre: {
+                type: 'string',
+                description: 'El "name" que devolvió buscar_programa para este resultado.',
+            },
+            appId: {
+                type: 'string',
+                description: 'El "appId" exacto que devolvió buscar_programa para este resultado.',
+            },
+            esAppDeStore: {
+                type: 'boolean',
+                description: 'El "isStoreApp" exacto que devolvió buscar_programa para este resultado.',
+            },
+        },
+        required: ['nombre', 'appId', 'esAppDeStore'],
+    },
+};
+
 const actualizarProyectoDeclaration: FunctionDeclaration = {
     name: 'actualizar_proyecto',
     description:
@@ -486,9 +594,9 @@ const abrirPaginaWebDeclaration: FunctionDeclaration = {
 const reproducirYoutubeDeclaration: FunctionDeclaration = {
     name: 'reproducir_youtube',
     description:
-        'Busca algo en YouTube y reproduce el primer resultado — úsala cuando Andrés pida ' +
-        '"pon", "reproduce", o "busca y pon" una canción, video, o cualquier cosa que se pueda ' +
-        'ver/escuchar en YouTube.',
+        'Busca algo en YouTube y lo reproduce DE INMEDIATO, interrumpiendo lo que estuviera ' +
+        'sonando antes — úsala cuando Andrés pida "pon", "reproduce", o "busca y pon" una ' +
+        'canción, video, o cualquier cosa que se pueda ver/escuchar en YouTube.',
     parametersJsonSchema: {
         type: 'object',
         properties: {
@@ -498,6 +606,36 @@ const reproducirYoutubeDeclaration: FunctionDeclaration = {
             },
         },
         required: ['consulta'],
+    },
+};
+
+const agregarAFilaDeclaration: FunctionDeclaration = {
+    name: 'agregar_a_fila',
+    description:
+        'Busca algo en YouTube y lo abre en el navegador — YA NO existe una fila de verdad ' +
+        '(YouTube abre en el navegador real de Andrés, fuera del control de ALYA), así que ' +
+        'esto se comporta igual que reproducir_youtube: cada pedido abre su propia pestaña.',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {
+            consulta: {
+                type: 'string',
+                description: 'Qué buscar y abrir.',
+            },
+        },
+        required: ['consulta'],
+    },
+};
+
+const verFilaDeclaration: FunctionDeclaration = {
+    name: 'ver_fila',
+    description:
+        'Ya NO puede decir qué está sonando ni qué hay en espera — YouTube abre en el ' +
+        'navegador real de Andrés, fuera del control de ALYA. Si la usa, avísale claramente ' +
+        'que no tienes esa información, no inventes un estado.',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {},
     },
 };
 
@@ -766,11 +904,17 @@ const tools = [
             cancelarRecordatorioDeclaration,
             abrirPaginaWebDeclaration,
             reproducirYoutubeDeclaration,
+            agregarAFilaDeclaration,
+            verFilaDeclaration,
             actualizarProyectoDeclaration,
             listarProyectosDeclaration,
             borrarProyectoDeclaration,
             revisarSeguridadDeclaration,
             escanearVirusDeclaration,
+            conectarSpotifyDeclaration,
+            reproducirSpotifyDeclaration,
+            buscarProgramaDeclaration,
+            abrirProgramaEncontradoDeclaration,
         ],
     },
 ];
@@ -1150,14 +1294,29 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
         case 'reproducir_youtube': {
             const consulta = String(args.consulta ?? '');
             try {
+                await playImmediately(consulta);
+                return { result: { ok: true, message: `Reproduciendo "${consulta}" ahora mismo.` } };
+            } catch (err) {
+                return { result: { ok: false, error: (err as Error).message } };
+            }
+        }
+
+        case 'agregar_a_fila': {
+            const consulta = String(args.consulta ?? '');
+            try {
                 const { playedNow, queuePosition } = await queueOrPlaySong(consulta);
                 const message = playedNow
-                    ? `Reproduciendo "${consulta}" ahora mismo.`
-                    : `"${consulta}" agregada a la fila (posición ${queuePosition}) — ya hay algo sonando.`;
+                    ? `Nada estaba sonando, así que reproduciendo "${consulta}" ahora mismo.`
+                    : `"${consulta}" agregada a la fila (posición ${queuePosition}).`;
                 return { result: { ok: true, message } };
             } catch (err) {
                 return { result: { ok: false, error: (err as Error).message } };
             }
+        }
+
+        case 'ver_fila': {
+            const estado = getQueueState();
+            return { result: { ok: true, ...estado } };
         }
 
         case 'actualizar_proyecto': {
@@ -1208,6 +1367,57 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
                         message: 'Escaneo rápido iniciado en segundo plano, puede tardar varios minutos.',
                     },
                 };
+            } catch (err) {
+                return { result: { ok: false, error: (err as Error).message } };
+            }
+        }
+
+        case 'conectar_spotify': {
+            try {
+                await startSpotifyAuth();
+                return { result: { ok: true, message: 'Conectada a Spotify con éxito.' } };
+            } catch (err) {
+                return { result: { ok: false, error: (err as Error).message } };
+            }
+        }
+
+        case 'reproducir_spotify': {
+            const consulta = String(args.consulta ?? '');
+            try {
+                if (!isSpotifyConnected()) {
+                    return {
+                        result: {
+                            ok: false,
+                            error: 'Todavía no estoy conectada a Spotify — usa conectar_spotify primero.',
+                        },
+                    };
+                }
+                const track = await searchAndPlaySpotify(consulta);
+                return {
+                    result: { ok: true, message: `Reproduciendo "${track.name}" de ${track.artist} en Spotify.` },
+                };
+            } catch (err) {
+                return { result: { ok: false, error: (err as Error).message } };
+            }
+        }
+
+        case 'buscar_programa': {
+            const nombre = String(args.nombre ?? '');
+            try {
+                const programas = await findInstalledProgram(nombre);
+                return { result: { ok: true, cantidad: programas.length, programas } };
+            } catch (err) {
+                return { result: { ok: false, error: (err as Error).message } };
+            }
+        }
+
+        case 'abrir_programa_encontrado': {
+            const nombre = String(args.nombre ?? '');
+            const appId = String(args.appId ?? '');
+            const esAppDeStore = Boolean(args.esAppDeStore);
+            try {
+                await launchProgram({ name: nombre, appId, isStoreApp: esAppDeStore });
+                return { result: { ok: true, message: `Abriendo ${nombre}` } };
             } catch (err) {
                 return { result: { ok: false, error: (err as Error).message } };
             }
@@ -1467,9 +1677,24 @@ export async function sendMessage(userMessage: string): Promise<ChatMessage> {
         response = await chat.sendMessage({ message: functionResponseParts });
     }
 
+    // La librería de Gemini a veces devuelve una respuesta que es SOLO
+    // llamadas a herramientas, sin texto de acompañamiento — en ese caso
+    // response.text queda vacío. Nos aseguramos de nunca mandar una
+    // burbuja en blanco: si se agotaron los intentos con herramientas
+    // todavía pendientes, o si el texto vino vacío por cualquier otra
+    // razón, usamos un mensaje de respaldo en vez de dejarlo así.
+    let finalText = response.text ?? '';
+
+    if (response.functionCalls && response.functionCalls.length > 0) {
+        // Llegamos al límite de intentos con herramientas sin resolver.
+        finalText = 'Esto me está tomando más pasos de los normales — intenta pedírmelo de nuevo, quizás más simple.';
+    } else if (!finalText.trim()) {
+        finalText = 'Listo.';
+    }
+
     const finalReply: ChatMessage = {
         role: 'assistant',
-        text: response.text ?? '',
+        text: finalText,
         imageUrl,
         pendingConfirmation: newPendingConfirmation,
     };

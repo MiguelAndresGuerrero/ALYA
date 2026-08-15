@@ -1,165 +1,190 @@
-import { BrowserWindow, shell } from 'electron';
-import { setNowPlaying } from './obsOverlay';
+import { BrowserWindow, shell, session } from 'electron';
+import { getResourcePath } from './resourcePaths';
 
-// Reutilizamos UNA sola ventana de navegador SOLO para música — ahí es
-// donde vive la lógica de la fila de reproducción (necesita controlar
-// la ventana para saber cuándo termina una canción). Para todo lo demás
-// (páginas web normales, búsquedas), usamos tu navegador real (ver
-// openUrl más abajo), para que tengas tu sesión de Google y todo lo
-// demás ya iniciado — no una ventana aparte, sin tu cuenta.
-let browserWindow: BrowserWindow | null = null;
+// Ventana INVISIBLE, solo para buscar en YouTube (encontrar la URL del
+// primer resultado) — nunca se muestra ni reproduce nada ahí. Una vez
+// encontrada la URL, se abre de verdad en TU navegador real (Brave,
+// Chrome, el que tengas puesto por defecto en Windows).
+//
+// Nota: como YouTube ahora abre en tu navegador real, ALYA ya NO puede
+// controlar la fila de reproducción, el auto-salto de anuncios, ni
+// actualizar el overlay de OBS para YouTube — esas funciones necesitan
+// que ALYA controle la ventana, y tu navegador real está fuera de su
+// alcance. Es un cambio a propósito, no un bug.
+let searchWindow: BrowserWindow | null = null;
+let adBlockingReady = false;
 
-// Fila de reproducción: canciones esperando su turno. Cuando la que está
-// sonando termina, la siguiente de la fila arranca sola.
-const songQueue: string[] = [];
-let pollInterval: NodeJS.Timeout | null = null;
-const POLL_INTERVAL_MS = 5000;
+// Bloqueador de anuncios propio para la ventana de búsqueda (reduce el
+// ruido de fondo mientras busca, aunque ya no reproduce ahí).
+const AD_URL_PATTERNS = [
+    '*://*.doubleclick.net/*',
+    '*://*.googlesyndication.com/*',
+    '*://*.googleadservices.com/*',
+    '*://googleads.g.doubleclick.net/*',
+    '*://pubads.g.doubleclick.net/*',
+    '*://securepubads.g.doubleclick.net/*',
+    '*://static.doubleclick.net/*',
+    '*://*.2mdn.net/*',
+    '*://*.googletagservices.com/*',
+    '*://*/pagead/*',
+    '*://*/api/stats/ads*',
+    '*://*/ptracking*',
+    '*://*/get_midroll_*',
+    '*://*.google.com/pagead/*',
+];
 
-function getBrowserWindow(): BrowserWindow {
-    if (browserWindow && !browserWindow.isDestroyed()) {
-        return browserWindow;
+/**
+ * Prepara la sesión de la ventana de búsqueda (bloqueo de anuncios +
+ * extensiones cargadas a mano) — se llama UNA vez al arrancar la app.
+ */
+export async function initializePlayerSession(): Promise<void> {
+    if (adBlockingReady) return;
+    adBlockingReady = true;
+
+    const playerSession = session.fromPartition('persist:alya-player');
+    playerSession.webRequest.onBeforeRequest({ urls: AD_URL_PATTERNS }, (_details, callback) => {
+        callback({ cancel: true });
+    });
+
+    await loadSideloadedExtensions(playerSession);
+}
+
+// Extensiones de Chrome cargadas a mano (Electron no puede instalarlas
+// desde la tienda directo, hay que darle la carpeta ya descomprimida).
+// Cada una vive en ALYA/extensions/<nombre-de-carpeta>/ — agrega ahí
+// cualquier otra que quieras, no hace falta tocar código de nuevo.
+const EXTENSIONS_DIR = getResourcePath('extensions');
+
+async function loadSideloadedExtensions(playerSession: Electron.Session): Promise<void> {
+    const fs = await import('fs');
+    const path = await import('path');
+
+    if (!fs.existsSync(EXTENSIONS_DIR)) return;
+
+    const folders = fs.readdirSync(EXTENSIONS_DIR, { withFileTypes: true }).filter((e) => e.isDirectory());
+
+    for (const folder of folders) {
+        const extPath = path.join(EXTENSIONS_DIR, folder.name);
+        try {
+            const loaded = await playerSession.loadExtension(extPath, { allowFileAccess: true });
+            console.log(`[ALYA] Extensión cargada: ${loaded.name}`);
+        } catch (err) {
+            console.warn(`[ALYA] No pude cargar la extensión en ${extPath}:`, (err as Error).message);
+        }
+    }
+}
+
+function getSearchWindow(): BrowserWindow {
+    if (searchWindow && !searchWindow.isDestroyed()) {
+        return searchWindow;
     }
 
-    browserWindow = new BrowserWindow({
+    searchWindow = new BrowserWindow({
         width: 960,
         height: 680,
-        show: false,
-        title: 'ALYA — Navegador',
+        show: false, // nunca se muestra — es solo para buscar
+        title: 'ALYA — Búsqueda',
+        icon: getResourcePath('build', 'icon.ico'),
+        webPreferences: {
+            partition: 'persist:alya-player',
+        },
     });
 
-    browserWindow.on('closed', () => {
-        browserWindow = null;
-        songQueue.length = 0; // se cerró la ventana, ya no hay fila que seguir
-        setNowPlaying(null); // el overlay de OBS deja de mostrar algo
+    searchWindow.on('closed', () => {
+        searchWindow = null;
     });
 
-    return browserWindow;
+    return searchWindow;
 }
 
 /**
- * Abre cualquier URL en TU navegador real (Chrome, o el que tengas por
- * defecto) — con tu sesión de Google y todo lo demás ya iniciado. No usa
- * la ventana interna de ALYA (esa es solo para música).
+ * Abre cualquier URL en TU navegador real (Brave, Chrome, el que tengas
+ * por defecto) — con tu sesión ya iniciada.
  */
 export async function openUrl(url: string): Promise<void> {
     await shell.openExternal(url);
 }
 
 /**
- * Busca en YouTube y devuelve la URL del primer resultado, sin reproducir
- * nada todavía. YouTube puede cambiar su HTML con el tiempo, así que
- * probamos varios selectores conocidos por si uno deja de funcionar.
+ * Busca en YouTube y devuelve la URL Y el título del primer resultado,
+ * sin abrir nada todavía (eso lo hacen playImmediately/queueOrPlaySong).
+ * YouTube renderiza sus resultados con JavaScript DESPUÉS de que la
+ * página "terminó de cargar" — así que no basta con buscar una sola vez
+ * apenas carga; reintentamos varias veces con una pequeña espera entre
+ * cada intento, hasta que los resultados aparezcan de verdad.
  */
-async function findFirstYouTubeResult(query: string): Promise<string> {
-    const win = getBrowserWindow();
+async function findFirstYouTubeResult(query: string): Promise<{ url: string; title: string }> {
+    const win = getSearchWindow();
     const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
 
     await win.loadURL(searchUrl);
 
-    const firstVideoUrl: string | null = await win.webContents.executeJavaScript(`
+    const findScript = `
     (function() {
       const selectors = ['a#video-title', 'a#thumbnail', 'ytd-video-renderer a#video-title-link'];
       for (const sel of selectors) {
         const el = document.querySelector(sel);
-        if (el && el.href && el.href.includes('watch?v=')) return el.href;
+        if (el && el.href && el.href.includes('watch?v=')) {
+          return { url: el.href, title: (el.title || el.textContent || '').trim() };
+        }
       }
       return null;
     })();
-  `);
+  `;
 
-    if (!firstVideoUrl) {
-        win.show();
-        win.focus();
+    const MAX_INTENTOS = 10;
+    const ESPERA_ENTRE_INTENTOS_MS = 500;
+
+    let result: { url: string; title: string } | null = null;
+    for (let intento = 0; intento < MAX_INTENTOS; intento++) {
+        result = await win.webContents.executeJavaScript(findScript);
+        if (result) break;
+        await new Promise((resolve) => setTimeout(resolve, ESPERA_ENTRE_INTENTOS_MS));
+    }
+
+    if (!result) {
         throw new Error(
-            'No pude identificar el primer resultado automáticamente, pero te dejé abierta la ' +
-            'página de búsqueda para que elijas tú.'
+            'No pude identificar el primer resultado de la búsqueda — probá con otras palabras.'
         );
     }
 
-    return firstVideoUrl;
+    return result;
 }
 
 /**
- * Lee el título real del video actual (el que YouTube pone en la pestaña)
- * y se lo pasa al overlay de OBS.
+ * Busca algo en YouTube y lo abre en tu navegador real. Ya no interrumpe
+ * ni encola nada — cada pedido abre su propia pestaña, tal como
+ * funcionaría cualquier link normal.
  */
-async function updateOverlayFromCurrentPage(win: BrowserWindow): Promise<void> {
-    try {
-        const title: string = await win.webContents.executeJavaScript(
-            `document.title.replace(/ - YouTube$/, '')`
-        );
-        setNowPlaying(title || null);
-    } catch {
-        // no pasa nada si falla, el overlay solo se queda con el valor anterior
-    }
+export async function playImmediately(query: string): Promise<void> {
+    const { url } = await findFirstYouTubeResult(query);
+    await shell.openExternal(url);
 }
 
 /**
- * Revisa cada pocos segundos si la canción actual ya terminó, y si es
- * así, arranca la siguiente de la fila. Se detiene solo cuando la fila
- * queda vacía (se vuelve a activar cuando se agrega algo nuevo).
- */
-function ensureQueuePolling(): void {
-    if (pollInterval) return;
-
-    pollInterval = setInterval(async () => {
-        if (songQueue.length === 0) {
-            clearInterval(pollInterval!);
-            pollInterval = null;
-            return;
-        }
-
-        if (!browserWindow || browserWindow.isDestroyed()) return;
-
-        try {
-            const ended: boolean = await browserWindow.webContents.executeJavaScript(`
-        (function() {
-          const v = document.querySelector('video');
-          if (!v) return false;
-          return v.ended || (v.duration > 0 && v.currentTime >= v.duration - 1);
-        })();
-      `);
-
-            if (ended) {
-                const next = songQueue.shift()!;
-                await browserWindow.loadURL(next);
-                await updateOverlayFromCurrentPage(browserWindow);
-            }
-        } catch {
-            // La ventana puede estar cargando otra página en este instante — no pasa nada, probamos de nuevo en el próximo intervalo.
-        }
-    }, POLL_INTERVAL_MS);
-}
-
-/**
- * Busca algo en YouTube. Si no hay nada sonando ahora mismo, lo reproduce
- * directo. Si ya hay algo sonando, lo agrega al final de la fila —
- * arrancará solo cuando le toque el turno.
+ * Compatibilidad con el nombre anterior — ya no hay fila real (ALYA no
+ * puede controlar tu navegador externo), así que esto simplemente abre
+ * el video, igual que playImmediately. playedNow siempre es true.
  */
 export async function queueOrPlaySong(
     query: string
 ): Promise<{ playedNow: boolean; queuePosition: number }> {
-    const win = getBrowserWindow();
-    const videoUrl = await findFirstYouTubeResult(query);
-
-    const currentUrl = win.webContents.getURL();
-    const somethingIsPlaying = currentUrl.includes('youtube.com/watch');
-
-    if (!somethingIsPlaying) {
-        await win.loadURL(videoUrl);
-        win.show();
-        win.focus();
-        await updateOverlayFromCurrentPage(win);
-        return { playedNow: true, queuePosition: 0 };
-    }
-
-    songQueue.push(videoUrl);
-    ensureQueuePolling();
-    return { playedNow: false, queuePosition: songQueue.length };
+    const { url } = await findFirstYouTubeResult(query);
+    await shell.openExternal(url);
+    return { playedNow: true, queuePosition: 0 };
 }
 
-/** Compatibilidad con el nombre anterior — ahora usa la fila por dentro. */
+/**
+ * Ya no se puede saber qué está sonando ni qué hay en fila — eso
+ * necesitaba que ALYA controlara la ventana de reproducción, y ahora
+ * abre en tu navegador real, fuera de su alcance.
+ */
+export function getQueueState(): { currentlyPlaying: string | null; queue: string[] } {
+    return { currentlyPlaying: null, queue: [] };
+}
+
+/** Compatibilidad con el nombre anterior. */
 export async function searchAndPlayYouTube(query: string): Promise<string> {
-    const result = await queueOrPlaySong(query);
-    return result.playedNow ? 'reproduciendo ahora' : `agregada a la fila (posición ${result.queuePosition})`;
+    await playImmediately(query);
+    return 'abierto en tu navegador';
 }

@@ -874,9 +874,56 @@
             });
         }
 
+        /**
+         * Combina el micrófono con el audio del sistema (lo que suena por tus
+         * parlantes/audífonos — incluye llamadas de Discord, videos, etc.) en
+         * una sola grabación mezclada. Si el audio del sistema no se puede
+         * capturar por alguna razón, sigue funcionando solo con el micrófono
+         * (no rompe el control por voz por esto).
+         */
+        async function getMixedRecordingStream() {
+            const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const tracksToStopOnEnd = [...micStream.getTracks()];
+
+            let systemStream = null;
+            try {
+                const rawSystemStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { width: 1, height: 1 },
+                    audio: true,
+                });
+                rawSystemStream.getVideoTracks().forEach((track) => {
+                    track.stop();
+                    rawSystemStream.removeTrack(track);
+                });
+                if (rawSystemStream.getAudioTracks().length > 0) {
+                    systemStream = rawSystemStream;
+                    tracksToStopOnEnd.push(...systemStream.getTracks());
+                }
+            } catch (err) {
+                // No se pudo capturar el audio del sistema (ej. nada sonando, o
+                // el usuario canceló el permiso) — seguimos solo con el micrófono.
+                console.warn('No se pudo capturar audio del sistema, solo micrófono:', err.message);
+            }
+
+            if (!systemStream) {
+                return { stream: micStream, tracksToStopOnEnd };
+            }
+
+            // Mezclamos ambas fuentes en una sola pista de audio usando el
+            // Web Audio API — así el .wav final tiene tu voz Y lo que suena
+            // por el sistema, todo junto.
+            const audioContext = new AudioContext();
+            const destination = audioContext.createMediaStreamDestination();
+
+            audioContext.createMediaStreamSource(micStream).connect(destination);
+            audioContext.createMediaStreamSource(systemStream).connect(destination);
+
+            return { stream: destination.stream, tracksToStopOnEnd };
+        }
+
         async function startRecording() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const { stream, tracksToStopOnEnd } = await getMixedRecordingStream();
                 audioChunks = [];
                 mediaRecorder = new MediaRecorder(stream);
 
@@ -885,8 +932,9 @@
                 });
 
                 mediaRecorder.addEventListener('stop', async () => {
-                    // Soltamos el micrófono (apaga el ícono de "usando micrófono" del SO)
-                    stream.getTracks().forEach((track) => track.stop());
+                    // Soltamos el micrófono y el audio del sistema (apaga los
+                    // íconos de "en uso" del SO).
+                    tracksToStopOnEnd.forEach((track) => track.stop());
 
                     if (audioChunks.length === 0) return;
 

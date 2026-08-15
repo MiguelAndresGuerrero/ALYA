@@ -65,7 +65,7 @@ const SEARCH_TIMEOUT_MS = 8000;
 
 // Carpetas donde buscar por defecto si no se especifica una (evita
 // escanear el disco C: entero, que sería lentísimo y muy invasivo).
-const DEFAULT_SEARCH_FOLDERS = ['Desktop', 'Documents', 'Downloads'].map((f) =>
+const DEFAULT_SEARCH_FOLDERS = ['Desktop', 'Documents', 'Downloads', 'Videos', 'Music'].map((f) =>
     path.join(os.homedir(), f)
 );
 
