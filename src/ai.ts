@@ -1476,24 +1476,26 @@ export function resetChat(): void {
 export async function transcribeAudio(audioBase64: string, mimeType: string): Promise<string> {
     const client = getClient();
 
-    const response = await client.models.generateContent({
-        model: MODEL,
-        contents: [
-            {
-                role: 'user',
-                parts: [
-                    { inlineData: { mimeType, data: audioBase64 } },
-                    {
-                        text:
-                            'Transcribe exactamente lo que se dice en este audio, en español. ' +
-                            'Responde ÚNICAMENTE con la transcripción literal, sin comillas, sin ' +
-                            'explicaciones, sin agregar nada. Si no se entiende nada o está en silencio, ' +
-                            'responde con exactamente: [silencio]',
-                    },
-                ],
-            },
-        ],
-    });
+    const response = await withRetry(() =>
+        client.models.generateContent({
+            model: MODEL,
+            contents: [
+                {
+                    role: 'user',
+                    parts: [
+                        { inlineData: { mimeType, data: audioBase64 } },
+                        {
+                            text:
+                                'Transcribe exactamente lo que se dice en este audio, en español. ' +
+                                'Responde ÚNICAMENTE con la transcripción literal, sin comillas, sin ' +
+                                'explicaciones, sin agregar nada. Si no se entiende nada o está en silencio, ' +
+                                'responde con exactamente: [silencio]',
+                        },
+                    ],
+                },
+            ],
+        })
+    );
 
     return (response.text ?? '').trim();
 }
@@ -1522,15 +1524,17 @@ async function describeScreen(question?: string): Promise<string> {
 
     const imageParts = screens.map((s) => ({ inlineData: { mimeType: s.mimeType, data: s.base64 } }));
 
-    const response = await client.models.generateContent({
-        model: MODEL,
-        contents: [
-            {
-                role: 'user',
-                parts: [...imageParts, { text: instruction }],
-            },
-        ],
-    });
+    const response = await withRetry(() =>
+        client.models.generateContent({
+            model: MODEL,
+            contents: [
+                {
+                    role: 'user',
+                    parts: [...imageParts, { text: instruction }],
+                },
+            ],
+        })
+    );
 
     return (response.text ?? '').trim();
 }
@@ -1544,15 +1548,17 @@ async function describeScreen(question?: string): Promise<string> {
 async function searchWeb(query: string): Promise<string> {
     const client = getClient();
 
-    const response = await client.models.generateContent({
-        model: MODEL,
-        contents:
-            `Busca información actual sobre esto y responde en español, de forma breve ` +
-            `y natural (como en una conversación hablada): ${query}`,
-        config: {
-            tools: [{ googleSearch: {} }],
-        },
-    });
+    const response = await withRetry(() =>
+        client.models.generateContent({
+            model: MODEL,
+            contents:
+                `Busca información actual sobre esto y responde en español, de forma breve ` +
+                `y natural (como en una conversación hablada): ${query}`,
+            config: {
+                tools: [{ googleSearch: {} }],
+            },
+        })
+    );
 
     let text = (response.text ?? '').trim();
 
@@ -1592,20 +1598,22 @@ const MAX_TOOL_ITERATIONS = 5; // seguro contra loops infinitos de herramientas
 async function learnFromExchange(userMessage: string, assistantReply: string): Promise<void> {
     try {
         const client = getClient();
-        const response = await client.models.generateContent({
-            model: MODEL,
-            contents:
-                `Este es un intercambio entre Andrés y su asistente ALYA:\n` +
-                `Andrés: ${userMessage}\n` +
-                `ALYA: ${assistantReply}\n\n` +
-                `¿Hay algo aquí que sea una PREFERENCIA DURADERA o un dato permanente sobre Andrés ` +
-                `que valga la pena recordar para conversaciones futuras (ej. "prefiere Maven sobre ` +
-                `Gradle en proyectos Java", "trabaja de noche", "su gato se llama Rocky")? NO guardes ` +
-                `pedidos puntuales de una sola vez (ej. "abre Discord ahora", "pon esta canción"), ` +
-                `solo patrones genuinamente reutilizables en el futuro. Si hay algo así, responde ` +
-                `ÚNICAMENTE con esa frase en tercera persona, corta y clara, nada más. Si no hay ` +
-                `nada así, responde exactamente: ninguno`,
-        });
+        const response = await withRetry(() =>
+            client.models.generateContent({
+                model: MODEL,
+                contents:
+                    `Este es un intercambio entre Andrés y su asistente ALYA:\n` +
+                    `Andrés: ${userMessage}\n` +
+                    `ALYA: ${assistantReply}\n\n` +
+                    `¿Hay algo aquí que sea una PREFERENCIA DURADERA o un dato permanente sobre Andrés ` +
+                    `que valga la pena recordar para conversaciones futuras (ej. "prefiere Maven sobre ` +
+                    `Gradle en proyectos Java", "trabaja de noche", "su gato se llama Rocky")? NO guardes ` +
+                    `pedidos puntuales de una sola vez (ej. "abre Discord ahora", "pon esta canción"), ` +
+                    `solo patrones genuinamente reutilizables en el futuro. Si hay algo así, responde ` +
+                    `ÚNICAMENTE con esa frase en tercera persona, corta y clara, nada más. Si no hay ` +
+                    `nada así, responde exactamente: ninguno`,
+            })
+        );
 
         const learned = (response.text ?? '').trim();
         if (learned && learned.toLowerCase() !== 'ninguno' && learned.length < 200) {
@@ -1619,10 +1627,44 @@ async function learnFromExchange(userMessage: string, assistantReply: string): P
     }
 }
 
+/**
+ * Reintenta una llamada a Gemini si falla por un error TEMPORAL del lado
+ * de Google (503 "alta demanda", o 429 "demasiadas peticiones") — espera
+ * un poco más entre cada intento (2s, 4s, 8s). Cualquier otro tipo de
+ * error se deja pasar de inmediato, sin reintentar (no tiene sentido
+ * reintentar algo que no es un problema temporal).
+ */
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    const MAX_INTENTOS = 3;
+    const ESPERAS_MS = [2000, 4000, 8000];
+
+    for (let intento = 0; intento < MAX_INTENTOS; intento++) {
+        try {
+            return await fn();
+        } catch (err) {
+            const mensaje = (err as Error).message ?? '';
+            const esTemporal = mensaje.includes('503') || mensaje.includes('UNAVAILABLE') || mensaje.includes('429');
+            const esUltimoIntento = intento === MAX_INTENTOS - 1;
+
+            if (!esTemporal || esUltimoIntento) throw err;
+
+            console.warn(
+                `[ALYA] Gemini con alta demanda, reintentando en ${ESPERAS_MS[intento] / 1000}s ` +
+                `(intento ${intento + 1}/${MAX_INTENTOS})...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, ESPERAS_MS[intento]));
+        }
+    }
+
+    // Nunca debería llegar acá (el for ya cubre todos los casos), pero
+    // TypeScript necesita un retorno explícito en todos los caminos.
+    throw new Error('Se agotaron los reintentos.');
+}
+
 export async function sendMessage(userMessage: string): Promise<ChatMessage> {
     const chat = getChatSession();
 
-    let response = await chat.sendMessage({ message: userMessage });
+    let response = await withRetry(() => chat.sendMessage({ message: userMessage }));
     let imageUrl: string | undefined;
     let newPendingConfirmation: PendingConfirmation | undefined; // solo la de ESTE mensaje
 
@@ -1630,7 +1672,9 @@ export async function sendMessage(userMessage: string): Promise<ChatMessage> {
     while (response.functionCalls && response.functionCalls.length > 0 && iterations < MAX_TOOL_ITERATIONS) {
         iterations++;
 
-        const functionResponseParts = [];
+        const functionResponseParts: Array<{
+            functionResponse: { name: string; response: { result: unknown } };
+        }> = [];
         for (const call of response.functionCalls) {
             const name = call.name ?? '';
             const args = (call.args ?? {}) as Record<string, unknown>;
@@ -1674,7 +1718,7 @@ export async function sendMessage(userMessage: string): Promise<ChatMessage> {
             });
         }
 
-        response = await chat.sendMessage({ message: functionResponseParts });
+        response = await withRetry(() => chat.sendMessage({ message: functionResponseParts }));
     }
 
     // La librería de Gemini a veces devuelve una respuesta que es SOLO
@@ -1732,9 +1776,6 @@ export async function confirmPendingAction(): Promise<ChatMessage> {
     return { role: 'assistant', text };
 }
 
-/**
- * El usuario apretó "No" (o cerró el diálogo): cancela sin ejecutar nada.
- */
 export function cancelPendingAction(): ChatMessage {
     pendingConfirmation = null;
     return { role: 'assistant', text: 'Cancelado, no hice nada.' };
