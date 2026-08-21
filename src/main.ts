@@ -83,7 +83,7 @@ import AutoLaunch from 'auto-launch';
 import { getStatus, getTopProcesses, getNetworkLatency } from './systemTools';
 import { speak, startVoiceServer, stopVoiceServer } from './voice';
 import { sendMessage, resetChat, confirmPendingAction, cancelPendingAction, transcribeAudio } from './ai';
-import { identifySong } from './songId';
+import { identifySong } from './songid';
 import { startReminderScheduler } from './reminders';
 import { loadSettings, saveSettings, type AlyaSettings } from './settingsStore';
 import { startKickChatListener } from './kickChat';
