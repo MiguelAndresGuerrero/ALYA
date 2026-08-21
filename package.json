@@ -1,6 +1,6 @@
 {
   "name": "alya",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "ALYA - Asistente IA personal",
   "main": "out/main.js",
   "author": "Andres",
@@ -34,7 +34,7 @@
       "provider": "github",
       "owner": "MiguelAndresGuerrero",
       "repo": "ALYA",
-      "draft": false
+      "releaseType": "release"
     },
     "win": {
       "target": "nsis",
