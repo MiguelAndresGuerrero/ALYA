@@ -1,6 +1,6 @@
 {
   "name": "alya",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "ALYA - Asistente IA personal",
   "main": "out/main.js",
   "author": "Andres",
@@ -33,7 +33,8 @@
     "publish": {
       "provider": "github",
       "owner": "MiguelAndresGuerrero",
-      "repo": "ALYA"
+      "repo": "ALYA",
+      "draft": false
     },
     "win": {
       "target": "nsis",
@@ -65,10 +66,5 @@
         "to": "extensions"
       }
     ]
-  },
-  "allowScripts": {
-    "@google/genai@2.16.0": true,
-    "electron@31.7.7": true,
-    "protobufjs@7.6.5": true
   }
 }
