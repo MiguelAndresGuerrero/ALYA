@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const files = ['status.html', 'chat.html', 'settings.html'];
+const files = ['status.html', 'chat.html', 'settings.html', 'setup.html'];
 
 for (const file of files) {
   const src = path.join(__dirname, '..', 'src', file);

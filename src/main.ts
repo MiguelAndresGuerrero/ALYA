@@ -1,6 +1,7 @@
 import * as dotenv from 'dotenv';
-import { app, Tray, Menu, BrowserWindow, ipcMain, Notification, nativeImage, session, globalShortcut, desktopCapturer } from 'electron';
+import { app, Tray, Menu, BrowserWindow, ipcMain, Notification, nativeImage, session, globalShortcut, desktopCapturer, dialog, shell } from 'electron';
 import * as path from 'path';
+import * as fs from 'fs';
 
 // El .env vive en lugares distintos según el modo:
 // - En desarrollo (npm start): en la raíz del proyecto, junto al código.
@@ -14,13 +15,75 @@ const envPath = app.isPackaged
 
 dotenv.config({ path: envPath }); // Carga el .env ANTES de cualquier otra cosa
 
+/**
+ * ¿Ya hay una key de Gemini configurada? Si no, mostramos la pantalla de
+ * bienvenida antes de arrancar lo demás — evita que alguien instale
+ * ALYA y no sepa por qué "no piensa" hasta leer el README.
+ */
+function hasGeminiKey(): boolean {
+  const key = process.env.GEMINI_API_KEY;
+  return Boolean(key && key.trim().length > 0 && !key.includes('tu_key'));
+}
+
+/**
+ * Muestra la pantalla de bienvenida SOLO si todavía no hay una key de
+ * Gemini configurada. Se resuelve (deja seguir con el arranque normal)
+ * apenas la persona guarda una key o decide saltarlo — nunca bloquea
+ * arranques futuros una vez que ya hay una key guardada.
+ */
+function showFirstRunSetupIfNeeded(): Promise<void> {
+  if (hasGeminiKey()) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const setupWindow = new BrowserWindow({
+      width: 460,
+      height: 620,
+      resizable: false,
+      title: 'ALYA — Bienvenida',
+      icon: getResourcePath('build', 'icon.ico'),
+      webPreferences: {
+        preload: path.join(__dirname, 'setupPreload.js'),
+        contextIsolation: true,
+      },
+    });
+
+    setupWindow.setMenu(null);
+    setupWindow.loadFile(path.join(__dirname, 'setup.html'));
+
+    function finish(): void {
+      if (!setupWindow.isDestroyed()) setupWindow.close();
+      resolve();
+    }
+
+    ipcMain.handleOnce('setup:saveApiKey', async (_event, apiKey: string) => {
+      fs.mkdirSync(path.dirname(envPath), { recursive: true });
+      fs.writeFileSync(envPath, `GEMINI_API_KEY=${apiKey}\n`, 'utf8');
+      process.env.GEMINI_API_KEY = apiKey; // para que aplique YA en esta misma sesión
+      finish();
+    });
+
+    ipcMain.handleOnce('setup:skip', async () => {
+      finish();
+    });
+
+    ipcMain.handleOnce('setup:openLink', async (_event, url: string) => {
+      shell.openExternal(url);
+    });
+
+    // Si cierran la ventana con la X sin guardar ni saltar explícitamente,
+    // igual dejamos que ALYA arranque — no la dejamos encerrada ahí.
+    setupWindow.on('closed', () => resolve());
+  });
+}
+
 import AutoLaunch from 'auto-launch';
 
 import { getStatus, getTopProcesses, getNetworkLatency } from './systemTools';
-import { openApp } from './appLauncher';
 import { speak, startVoiceServer, stopVoiceServer } from './voice';
 import { sendMessage, resetChat, confirmPendingAction, cancelPendingAction, transcribeAudio } from './ai';
-import { identifySong } from './songid';
+import { identifySong } from './songId';
 import { startReminderScheduler } from './reminders';
 import { loadSettings, saveSettings, type AlyaSettings } from './settingsStore';
 import { startKickChatListener } from './kickChat';
@@ -30,6 +93,7 @@ import { queueOrPlaySong, initializePlayerSession } from './webBrowser';
 import { startOverlayServer } from './obsOverlay';
 import { loadProjects, type Project } from './projectsStore';
 import { getResourcePath } from './resourcePaths';
+import { autoUpdater } from 'electron-updater';
 import type { SystemStatus, ChatMessage } from './types';
 
 // Cambia esto por tu nombre
@@ -75,6 +139,69 @@ async function ensureAutoLaunch(): Promise<void> {
   if (!enabled) {
     await alyaAutoLaunch.enable();
   }
+}
+
+// Cada cuánto revisa si hay una versión nueva mientras sigue abierta
+// (además de la revisión que ya hace apenas arranca).
+const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 horas
+
+/**
+ * Auto-actualización: revisa GitHub Releases (donde `npm run publish`
+ * sube cada versión nueva), descarga en segundo plano si hay algo más
+ * reciente, y muestra una ventana preguntando si instalarla ahora — solo
+ * UNA vez por versión (no vuelve a molestar con la misma actualización
+ * aunque se cierre sin instalarla; sí se instala sola al próximo
+ * reinicio de todas formas).
+ */
+let ultimaVersionAvisada: string | null = null;
+
+function setupAutoUpdater(): void {
+  autoUpdater.logger = console;
+
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[ALYA] Nueva versión disponible: ${info.version} — descargando en segundo plano...`);
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('[ALYA] Ya tienes la última versión.');
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.warn('[ALYA] Error revisando actualizaciones:', err.message);
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    console.log(`[ALYA] Descargando actualización: ${Math.round(progress.percent)}%`);
+  });
+
+  autoUpdater.on('update-downloaded', async (info) => {
+    console.log(`[ALYA] Actualización ${info.version} lista.`);
+
+    // Ya avisamos de ESTA versión antes (ej. otra revisión periódica
+    // volvió a disparar el evento) — no repetimos la ventana.
+    if (ultimaVersionAvisada === info.version) return;
+    ultimaVersionAvisada = info.version;
+
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: 'ALYA — Actualización disponible',
+      message: `Hay una nueva versión de ALYA (${info.version}) lista para instalar.`,
+      detail: 'Se cerrará y volverá a abrir sola en unos segundos.',
+      buttons: ['Instalar ahora', 'Más tarde'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+
+    if (response === 0) {
+      autoUpdater.quitAndInstall();
+    }
+    // Si elige "Más tarde", no volvemos a preguntar por ESTA versión —
+    // igual se instala sola la próxima vez que cierre ALYA por su cuenta.
+  });
+
+  autoUpdater.checkForUpdates();
+  setInterval(() => autoUpdater.checkForUpdates(), UPDATE_CHECK_INTERVAL_MS);
 }
 
 // --- Ventana de estado (se abre al hacer click en el ícono) ---
@@ -228,7 +355,6 @@ function createTray(): void {
     { label: 'Hablar con ALYA', click: toggleChatWindow },
     { label: 'Ver estado del sistema', click: toggleStatusWindow },
     { label: 'Configuración', click: toggleSettingsWindow },
-    { label: 'Abrir Discord', click: () => openApp('discord').catch(console.error) },
     { type: 'separator' },
     { label: 'Salir', click: () => app.exit(0) },
   ]);
@@ -269,10 +395,22 @@ if (!gotSingleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    // Primera vez que se abre ALYA sin una key de Gemini configurada:
+    // mostramos la pantalla de bienvenida y esperamos a que termine
+    // antes de seguir con el resto del arranque normal.
+    await showFirstRunSetupIfNeeded();
+
     createTray();
     await ensureAutoLaunch();
     startVoiceServer(); // arranca el proceso de voz persistente antes del saludo
     greet();
+
+    // Auto-actualización: solo tiene sentido en la versión INSTALADA
+    // (.exe) — en modo desarrollo (npm start) no hay nada que descargar,
+    // y electron-updater ni siquiera funciona ahí.
+    if (app.isPackaged) {
+      setupAutoUpdater();
+    }
 
     // Bloqueo de anuncios + extensiones sideloaded para la ventana de
     // música — se prepara ANTES de que exista cualquier ventana, para
