@@ -35,4 +35,13 @@ contextBridge.exposeInMainWorld('alya', {
   },
   identifySong: (audioBase64: string, mimeType: string): Promise<ChatMessage> =>
     ipcRenderer.invoke('alya:identifySong', audioBase64, mimeType),
+
+  getSpotifyStatus: (): Promise<{ hasCredentials: boolean; connected: boolean }> =>
+    ipcRenderer.invoke('alya:getSpotifyStatus'),
+  saveSpotifyCredentials: (
+    clientId: string,
+    clientSecret: string
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('alya:saveSpotifyCredentials', clientId, clientSecret),
+  openLink: (url: string): Promise<void> => ipcRenderer.invoke('alya:openLink', url),
 });

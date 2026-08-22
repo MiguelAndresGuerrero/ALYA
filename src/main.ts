@@ -16,6 +16,49 @@ const envPath = app.isPackaged
 dotenv.config({ path: envPath }); // Carga el .env ANTES de cualquier otra cosa
 
 /**
+ * Agrega o actualiza variables puntuales en el .env SIN pisar las demás
+ * que ya estén ahí (a diferencia del guardado del setup inicial, que
+ * sobreescribe todo el archivo porque en ese momento solo existe
+ * GEMINI_API_KEY). Se usa para guardar credenciales desde el panel de
+ * Configuración una vez que ALYA ya está en uso, con más variables
+ * conviviendo en el mismo archivo.
+ */
+function upsertEnvVars(updates: Record<string, string>): void {
+  let existingLines: string[] = [];
+  try {
+    existingLines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter((line) => line.trim().length > 0);
+  } catch {
+    existingLines = [];
+  }
+
+  const pending = new Map(Object.entries(updates));
+
+  const merged = existingLines.map((line) => {
+    const eqIndex = line.indexOf('=');
+    if (eqIndex === -1) return line;
+    const key = line.slice(0, eqIndex).trim();
+    if (pending.has(key)) {
+      const value = pending.get(key)!;
+      pending.delete(key);
+      return `${key}=${value}`;
+    }
+    return line;
+  });
+
+  for (const [key, value] of pending) {
+    merged.push(`${key}=${value}`);
+  }
+
+  fs.mkdirSync(path.dirname(envPath), { recursive: true });
+  fs.writeFileSync(envPath, merged.join('\n') + '\n', 'utf8');
+
+  // Para que apliquen YA en esta misma sesión, sin reiniciar ALYA.
+  for (const [key, value] of Object.entries(updates)) {
+    process.env[key] = value;
+  }
+}
+
+/**
  * ¿Ya hay una key de Gemini configurada? Si no, mostramos la pantalla de
  * bienvenida antes de arrancar lo demás — evita que alguien instale
  * ALYA y no sepa por qué "no piensa" hasta leer el README.
@@ -93,6 +136,7 @@ import { queueOrPlaySong, initializePlayerSession } from './webBrowser';
 import { startOverlayServer } from './obsOverlay';
 import { loadProjects, type Project } from './projectsStore';
 import { getResourcePath } from './resourcePaths';
+import { startSpotifyAuth, isSpotifyConnected } from './spotify';
 import { autoUpdater } from 'electron-updater';
 import type { SystemStatus, ChatMessage } from './types';
 
@@ -580,6 +624,44 @@ ipcMain.handle('alya:getSettings', async (): Promise<AlyaSettings> => {
 ipcMain.handle('alya:saveSettings', async (_event, settings: AlyaSettings): Promise<void> => {
   saveSettings(settings);
   resetChat();
+});
+
+// Credenciales de Spotify: se guardan en el .env (no en configuracion.json,
+// porque spotify.ts las lee de process.env, igual que el resto de keys) y
+// aplican de inmediato sin reiniciar ALYA. Después de guardarlas, arranca
+// el login de Spotify de una vez para no obligar a pedírselo por chat.
+ipcMain.handle(
+  'alya:saveSpotifyCredentials',
+  async (_event, clientId: string, clientSecret: string): Promise<{ ok: boolean; error?: string }> => {
+    const id = clientId.trim();
+    const secret = clientSecret.trim();
+
+    if (!id || !secret) {
+      return { ok: false, error: 'Faltan el Client ID o el Client Secret.' };
+    }
+
+    upsertEnvVars({ SPOTIFY_CLIENT_ID: id, SPOTIFY_CLIENT_SECRET: secret });
+
+    try {
+      await startSpotifyAuth();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+);
+
+ipcMain.handle('alya:getSpotifyStatus', async (): Promise<{ hasCredentials: boolean; connected: boolean }> => {
+  const hasCredentials = Boolean(
+    process.env.SPOTIFY_CLIENT_ID?.trim() && process.env.SPOTIFY_CLIENT_SECRET?.trim()
+  );
+  return { hasCredentials, connected: isSpotifyConnected() };
+});
+
+// Para abrir links externos (ej. el dashboard de Spotify) desde ventanas
+// que no son la de bienvenida — esa ya tenía su propio setup:openLink.
+ipcMain.handle('alya:openLink', async (_event, url: string): Promise<void> => {
+  shell.openExternal(url);
 });
 
 // Confirmación de acciones sensibles (ej. cerrar una app)

@@ -3,8 +3,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app, shell } from 'electron';
 
-const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID ?? '';
-const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET ?? '';
+// OJO: se leen como funciones, no como constantes fijas al importar el
+// módulo — así, si guardas las credenciales desde el panel de
+// Configuración mientras ALYA ya está corriendo, se usan de inmediato
+// sin tener que reiniciar la app.
+function getClientId(): string {
+    return process.env.SPOTIFY_CLIENT_ID ?? '';
+}
+
+function getClientSecret(): string {
+    return process.env.SPOTIFY_CLIENT_SECRET ?? '';
+}
+
 const REDIRECT_URI = 'http://127.0.0.1:8888/callback';
 const SCOPES = 'user-modify-playback-state user-read-playback-state';
 
@@ -46,7 +56,7 @@ function saveTokens(tokens: SpotifyTokens): void {
 }
 
 function checkCredentials(): void {
-    if (!CLIENT_ID || !CLIENT_SECRET) {
+    if (!getClientId() || !getClientSecret()) {
         throw new Error(
             'Falta configurar SPOTIFY_CLIENT_ID y SPOTIFY_CLIENT_SECRET en el .env (ver README).'
         );
@@ -128,7 +138,7 @@ export function startSpotifyAuth(): Promise<void> {
         server.listen(8888, '127.0.0.1', () => {
             const authUrl =
                 `https://accounts.spotify.com/authorize?` +
-                `client_id=${encodeURIComponent(CLIENT_ID)}` +
+                `client_id=${encodeURIComponent(getClientId())}` +
                 `&response_type=code` +
                 `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
                 `&scope=${encodeURIComponent(SCOPES)}`;
@@ -144,7 +154,7 @@ export function startSpotifyAuth(): Promise<void> {
 }
 
 async function exchangeCodeForTokens(code: string): Promise<void> {
-    const basicAuth = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+    const basicAuth = Buffer.from(`${getClientId()}:${getClientSecret()}`).toString('base64');
 
     const response = await fetch('https://accounts.spotify.com/api/token', {
         method: 'POST',
@@ -172,7 +182,7 @@ async function exchangeCodeForTokens(code: string): Promise<void> {
 }
 
 async function refreshAccessToken(refreshToken: string): Promise<SpotifyTokens> {
-    const basicAuth = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+    const basicAuth = Buffer.from(`${getClientId()}:${getClientSecret()}`).toString('base64');
 
     const response = await fetch('https://accounts.spotify.com/api/token', {
         method: 'POST',

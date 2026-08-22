@@ -185,6 +185,73 @@
             height: 16px;
             margin-top: 10px;
         }
+
+        .section-divider {
+            border: none;
+            border-top: 1px solid var(--panel-border);
+            margin: 22px 0 18px;
+        }
+
+        .section-title {
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--dim);
+            margin-bottom: 10px;
+            font-family: var(--mono);
+        }
+
+        .section-hint {
+            font-size: 12px;
+            color: var(--dim);
+            line-height: 1.5;
+            margin-bottom: 12px;
+        }
+
+        .section-hint a {
+            color: var(--cyan);
+            text-decoration: none;
+        }
+
+        .section-hint a:hover {
+            text-decoration: underline;
+        }
+
+        #connect-spotify-btn {
+            width: 100%;
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        #connect-spotify-btn:hover:not(:disabled) {
+            border-color: var(--cyan);
+        }
+
+        #connect-spotify-btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+
+        .spotify-status {
+            font-size: 12px;
+            margin-top: 10px;
+            text-align: center;
+            min-height: 16px;
+        }
+
+        .spotify-status.ok {
+            color: #5ee69b;
+        }
+
+        .spotify-status.error {
+            color: #ff5f5f;
+        }
     </style>
 </head>
 
@@ -237,6 +304,30 @@
 
         <button id="save-btn">Guardar cambios</button>
         <div id="status-msg"></div>
+
+        <hr class="section-divider" />
+
+        <div class="section-title">Spotify</div>
+        <div class="section-hint">
+            Para que ALYA pueda reproducir canciones directo en tu Spotify, crea una
+            app gratis en el <a href="#" id="spotify-dashboard-link">dashboard de Spotify
+                for Developers</a>, copia el Client ID y el Client Secret, y agrega
+            <code>http://127.0.0.1:8888/callback</code> como Redirect URI en la
+            configuración de esa app.
+        </div>
+
+        <div class="field">
+            <label for="spotifyClientId">Client ID</label>
+            <input type="text" id="spotifyClientId" placeholder="Client ID de tu app de Spotify" />
+        </div>
+
+        <div class="field">
+            <label for="spotifyClientSecret">Client Secret</label>
+            <input type="text" id="spotifyClientSecret" placeholder="Client Secret de tu app de Spotify" />
+        </div>
+
+        <button id="connect-spotify-btn">Guardar y conectar Spotify</button>
+        <div id="spotify-status" class="spotify-status"></div>
     </div>
 
     <script>
@@ -298,7 +389,62 @@
             setTimeout(() => (statusMsg.textContent = ''), 3000);
         });
 
+        // --- Spotify ---
+        const spotifyDashboardLink = document.getElementById('spotify-dashboard-link');
+        const spotifyClientIdInput = document.getElementById('spotifyClientId');
+        const spotifyClientSecretInput = document.getElementById('spotifyClientSecret');
+        const connectSpotifyBtn = document.getElementById('connect-spotify-btn');
+        const spotifyStatus = document.getElementById('spotify-status');
+
+        spotifyDashboardLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            window.alya.openLink('https://developer.spotify.com/dashboard');
+        });
+
+        async function loadSpotifyStatus() {
+            const { hasCredentials, connected } = await window.alya.getSpotifyStatus();
+            if (connected) {
+                spotifyStatus.textContent = '✓ Conectada a Spotify';
+                spotifyStatus.className = 'spotify-status ok';
+            } else if (hasCredentials) {
+                spotifyStatus.textContent = 'Credenciales guardadas, pero todavía no conectada — dale a "Guardar y conectar Spotify" para aprobar el acceso.';
+                spotifyStatus.className = 'spotify-status error';
+            } else {
+                spotifyStatus.textContent = 'Todavía no está conectada a Spotify.';
+                spotifyStatus.className = 'spotify-status error';
+            }
+        }
+
+        connectSpotifyBtn.addEventListener('click', async () => {
+            const clientId = spotifyClientIdInput.value.trim();
+            const clientSecret = spotifyClientSecretInput.value.trim();
+
+            if (!clientId || !clientSecret) {
+                spotifyStatus.textContent = 'Pega el Client ID y el Client Secret antes de continuar.';
+                spotifyStatus.className = 'spotify-status error';
+                return;
+            }
+
+            connectSpotifyBtn.disabled = true;
+            connectSpotifyBtn.textContent = 'Abriendo el navegador para aprobar el acceso...';
+            spotifyStatus.textContent = '';
+
+            const result = await window.alya.saveSpotifyCredentials(clientId, clientSecret);
+
+            connectSpotifyBtn.disabled = false;
+            connectSpotifyBtn.textContent = 'Guardar y conectar Spotify';
+
+            if (result.ok) {
+                spotifyClientSecretInput.value = '';
+                await loadSpotifyStatus();
+            } else {
+                spotifyStatus.textContent = result.error || 'No se pudo conectar con Spotify.';
+                spotifyStatus.className = 'spotify-status error';
+            }
+        });
+
         loadCurrentSettings();
+        loadSpotifyStatus();
     </script>
 </body>
 
