@@ -9,6 +9,7 @@ export interface AlyaSettings {
     lengthScale: number; // ritmo: más alto = más pausada
     noiseScale: number; // entonación: más alto = menos plana
     noiseW: number; // variación en duración de sonidos
+    volume: number; // volumen de la voz, 0-100
 }
 
 const DEFAULT_SETTINGS: AlyaSettings = {
@@ -16,6 +17,7 @@ const DEFAULT_SETTINGS: AlyaSettings = {
     lengthScale: 1.15,
     noiseScale: 0.85,
     noiseW: 1.0,
+    volume: 100,
 };
 
 export function loadSettings(): AlyaSettings {

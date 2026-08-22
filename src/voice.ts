@@ -65,6 +65,41 @@ function getWavDurationSeconds(wavPath: string): number | null {
   }
 }
 
+/**
+ * Baja el volumen de un .wav ya generado, escalando directamente las
+ * muestras PCM de 16 bits en el propio archivo — así no depende de que
+ * el reproductor (Media.SoundPlayer) tenga control de volumen, porque no
+ * lo tiene. Si el volumen es 100 (o más) no se toca el archivo, para no
+ * perder calidad de audio sin necesidad.
+ */
+function applyVolumeToWav(wavPath: string, volumePercent: number): void {
+  const clamped = Math.max(0, Math.min(100, volumePercent));
+  if (clamped >= 100) return;
+
+  try {
+    const buffer = fs.readFileSync(wavPath);
+    const bitsPerSample = buffer.readUInt16LE(34);
+    const dataSize = buffer.readUInt32LE(40);
+    const dataStart = 44;
+
+    if (bitsPerSample !== 16) return; // formato inesperado, mejor no tocar el audio
+
+    const factor = clamped / 100;
+    const dataEnd = Math.min(buffer.length, dataStart + dataSize);
+
+    for (let i = dataStart; i + 1 < dataEnd; i += 2) {
+      const sample = buffer.readInt16LE(i);
+      const scaled = Math.round(sample * factor);
+      buffer.writeInt16LE(Math.max(-32768, Math.min(32767, scaled)), i);
+    }
+
+    fs.writeFileSync(wavPath, buffer);
+  } catch (err) {
+    console.error('No se pudo ajustar el volumen del audio:', (err as Error).message);
+    // seguimos igual con el audio al volumen original antes que no sonar nada
+  }
+}
+
 function speakWithPiper(text: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const settings = loadSettings();
@@ -85,6 +120,7 @@ function speakWithPiper(text: string): Promise<void> {
       if (code !== 0) {
         return reject(new Error(`Piper terminó con error: ${stderr.trim() || `código ${code}`}`));
       }
+      applyVolumeToWav(TEMP_WAV, settings.volume ?? 100);
       playWav(TEMP_WAV).then(resolve).catch(reject);
     });
 
@@ -126,12 +162,16 @@ function playWav(wavPath: string): Promise<void> {
 
 function speakFallback(text: string): Promise<void> {
   return new Promise((resolve) => {
+    const settings = loadSettings();
+    const volume = Math.max(0, Math.min(100, Math.round(settings.volume ?? 100)));
+
     const script = [
       'Add-Type -AssemblyName System.Speech',
       '[Console]::InputEncoding = [System.Text.Encoding]::UTF8',
       '$text = [Console]::In.ReadToEnd()',
       '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer',
       '$s.Rate = 0',
+      `$s.Volume = ${volume}`,
       '$s.Speak($text)',
     ].join('; ');
 
