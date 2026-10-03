@@ -1,4 +1,5 @@
 import * as http from 'http';
+import { SPOTIFY_REDIRECT_URI } from './guides';
 import * as fs from 'fs';
 import * as path from 'path';
 import { app, shell } from 'electron';
@@ -15,7 +16,8 @@ function getClientSecret(): string {
     return process.env.SPOTIFY_CLIENT_SECRET ?? '';
 }
 
-const REDIRECT_URI = 'http://127.0.0.1:8888/callback';
+// (definido en guides.ts para que la guía y el código usen exactamente la misma dirección)
+const REDIRECT_URI = SPOTIFY_REDIRECT_URI;
 const SCOPES = 'user-modify-playback-state user-read-playback-state';
 
 const TOKENS_FILE = path.join(app.getPath('userData'), 'spotify-tokens.json');
@@ -170,7 +172,24 @@ async function exchangeCodeForTokens(code: string): Promise<void> {
     });
 
     if (!response.ok) {
-        throw new Error(`Spotify rechazó el intercambio de token: ${response.status}`);
+        // Spotify explica el motivo en la respuesta: se traduce a algo que
+        // se pueda arreglar, en vez de dejar solo un número.
+        const detail = (await response.json().catch(() => null)) as { error?: string; error_description?: string } | null;
+        const reason = `${detail?.error ?? ''} ${detail?.error_description ?? ''}`.toLowerCase();
+
+        if (reason.includes('redirect')) {
+            throw new Error(
+                `Spotify rechazó la conexión: el Redirect URI de tu app no es exactamente ${REDIRECT_URI}. ` +
+                'Corrígelo en "Settings" de la app en Spotify for Developers.'
+            );
+        }
+        if (reason.includes('invalid_client') || response.status === 400 || response.status === 401) {
+            throw new Error(
+                'Spotify rechazó las credenciales: el Client Secret no corresponde a ese Client ID (o se pegó con un ' +
+                'espacio de más). Cópialos de nuevo, los dos de la misma app, y vuelve a guardarlos en Configuración.'
+            );
+        }
+        throw new Error(`Spotify rechazó la conexión (código ${response.status}).`);
     }
 
     const data = (await response.json()) as SpotifyTokenResponse;

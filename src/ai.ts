@@ -1,8 +1,19 @@
-import { GoogleGenAI, FunctionDeclaration, Chat } from '@google/genai';
+import { GoogleGenAI, FunctionDeclaration, Chat, ThinkingLevel } from '@google/genai';
+import type {
+    Content,
+    FunctionCall,
+    GenerateContentConfig,
+    GenerateContentResponse,
+    Part,
+    PartListUnion,
+    SendMessageParameters,
+} from '@google/genai';
 import { openApp, closeApp } from './appLauncher';
 import { getStatus } from './systemTools';
 import { generateImage } from './imageGen';
-import { openFolder, searchFiles } from './fileTools';
+import { openFolder, searchFiles, getHiddenSensitiveCount } from './fileTools';
+import { redactDeep, redactSecrets } from './secrets';
+import { getGuide, GUIDE_IDS } from './guides';
 import { sendMediaKey, MediaAction } from './mediaControl';
 import { captureAllScreens } from './screenCapture';
 import { loadMemory, addMemory, removeMemory } from './memoryStore';
@@ -16,7 +27,13 @@ import { loadProjects, upsertProject, deleteProject } from './projectsStore';
 import { getDefenderStatus, startQuickScan } from './security';
 import { startSpotifyAuth, searchAndPlaySpotify, isSpotifyConnected } from './spotify';
 import { findInstalledProgram, launchProgram } from './programSearch';
-import type { ChatMessage, PendingConfirmation } from './types';
+import { extractMood, guessMood, type Mood } from './expression';
+import { pickThinkingDepth, type ThinkingDepth } from './thinking';
+import { recognizeSong, describeRecognition } from './songRecognition';
+import { saveToSpotifyLikedSongs } from './spotifyWeb';
+import { loadProfile, describeProfile, recordUserMessage, recordToolUse, addStyleNote, removeStyleNote } from './userProfile';
+import { buildCard } from './cards';
+import type { ChatMessage, ChatImage, ChatCard, PendingConfirmation } from './types';
 
 const MODEL = 'gemini-3.5-flash-lite'; // rápido, barato, ideal para un asistente personal
 
@@ -36,6 +53,20 @@ con cualquier reproductor activo, sin importar cuál), ver y analizar su
 pantalla (captura + descripción), identificar canciones que estén sonando,
 buscar información actual en internet, generar imágenes, y recordar cosas
 de forma permanente entre conversaciones.
+
+Canciones: si Andrés pregunta qué canción está sonando, cómo se llama lo que
+suena, de quién es, etc., usa identificar_cancion — funciona suene donde
+suene: Spotify, YouTube u otra página en el navegador, Discord, un juego, o
+incluso algo que suena fuera del PC (lo escucha por el micrófono). Puede
+tardar unos segundos si tiene que escuchar. Si "problema_al_escuchar" habla
+del token de AudD, dile a Andrés tal cual que el reconocimiento por audio está
+apagado porque su token de AudD no es válido o venció (no digas "un tema de
+la API"), y sigue con lo que reporte Windows. Con el resultado: si hay
+"identificada_por_audio", esa es la canción. Si solo hay un título de
+pestaña o video, saca de ahí la canción y el artista si se entiende (ej.
+"Artista - Canción (Video Oficial)"). Si Andrés dice que no era esa, o quiere
+la canción que suena DE FONDO en un video o stream, llama de nuevo con
+escuchar en true. Nunca inventes una canción si la herramienta no encontró nada.
 
 Para preguntas sobre información que podría haber cambiado (noticias,
 precios, resultados deportivos, versiones de software, clima, eventos
@@ -95,6 +126,54 @@ en el navegador que se le va a abrir. Si NO menciona Spotify, usa
 reproducir_youtube por defecto. Si pide "abre Spotify" sin pedir una
 canción específica, usa abrir_pagina_web con "https://open.spotify.com".
 
+Privacidad y credenciales (regla estricta): nunca muestres, dictes, copies ni
+resumas contraseñas, API keys, tokens, Client Secrets, cookies ni el contenido
+de archivos de credenciales (.env, llaves, archivos de cuentas). El programa ya
+los protege: esos archivos no aparecen en las búsquedas ni se pueden leer, y
+cualquier clave que apareciera llega tachada como "[oculto]". Si ves
+"[oculto]" o un aviso de archivo protegido, no intentes conseguirlo por otro
+camino (otro comando, otra ruta, otra herramienta): dile a Andrés que eso está
+protegido. Si una búsqueda dice que hay archivos "ocultos_por_seguridad", puedes
+decir cuántos son, nada más.
+Para CONFIGURAR algo de ALYA (su nombre, la voz, Spotify, las claves) usa
+abrir_configuracion: eso abre el panel donde Andrés lo cambia él mismo. Nunca
+busques ni abras archivos del proyecto o del disco para "configurar" algo, y
+no le pidas que te escriba una clave en el chat.
+
+Guía de Spotify: cuando Andrés pregunte cómo conectar o configurar Spotify,
+cómo conseguir el Client ID o el Client Secret, o cuando conectar_spotify o
+reproducir_spotify fallen por credenciales (faltan, error 400, Redirect URI),
+usa mostrar_guia con tema "spotify". Eso pone en el chat una tarjeta con el
+minitutorial completo: los pasos, un botón para abrir la página de Spotify, el
+Redirect URI listo para copiar y qué hacer si algo falla. Tú NO recites los
+pasos (ya están en la tarjeta, y leídos en voz alta son eternos): di en una o
+dos frases que ahí tiene la guía, menciona lo que más le sirva en su caso (por
+ejemplo, qué paso revisar si le salió un error) y ofrece ayudarlo si se traba
+en alguno. Si después pregunta por un paso concreto, explícale ese paso con
+tus palabras.
+
+Favoritos de Spotify: para guardar una canción en sus "Canciones que te
+gustan" usa guardar_en_spotify. NO necesita que Spotify esté conectada por la
+API ni conectar_spotify: usa el reproductor web de Spotify en una ventana
+propia. Si Andrés dice "la que estoy escuchando" o "esa canción", toma el
+título y el artista de lo que ya identificaste (o usa identificar_cancion) y
+pásalos LIMPIOS y por separado: de un video titulado "Cold Steel Extended -
+Power Glove (Devil May Cry)" el título es "Cold Steel" y el artista "Power
+Glove" (el canal que lo subió NO es el artista). Sobre el resultado, di
+EXACTAMENTE lo que pasó según "estado" y "mensaje", sin suponer causas:
+- saved / already: di qué canción quedó guardada (la que devuelve la herramienta).
+- login: se abrió una ventana para iniciar sesión una vez; que te lo pida de nuevo después.
+- no_match: NO se guardó nada porque ningún resultado coincidía. Eso NO
+  significa que la canción no esté en Spotify: puede llamarse distinto. Dile
+  las parecidas que devolvió y, si tiene sentido, prueba UNA vez más con otro
+  título o artista más probable.
+- not_loaded / error / unconfirmed: fue un problema técnico con la página de
+  Spotify, no con la canción. Dilo así.
+Nunca digas que una canción "no está en el catálogo de Spotify": no lo sabes.
+Solo guarda en Canciones que te gustan: si pide "mi playlist" sin nombrar
+una, guárdala ahí y díselo; si nombra una playlist concreta, dile que por
+ahora solo puedes guardarla en favoritos y ofrécelo.
+
 Programas y juegos: para apps conocidas (Discord, Spotify, Steam, Chrome,
 VS Code) usa abrir_app. Para CUALQUIER OTRA cosa instalada — un juego
 específico, un programa que no está en esa lista (ej. OBS, WhatsApp,
@@ -134,6 +213,51 @@ La búsqueda de archivos es rápida pero limitada (no revisa todo el disco,
 solo carpetas comunes salvo que Andrés indique otra). Si no encuentra nada,
 dilo claramente y pregúntale dónde más buscar en vez de inventar resultados.
 
+Cómo pensar antes de responder o actuar:
+- Entiende qué quiere lograr Andrés de verdad, no solo sus palabras literales.
+  Para interpretar pedidos cortos o ambiguos apóyate en la conversación, en lo
+  que recuerdas de él y en cómo suele usarte.
+- Si el pedido tiene varios pasos, ordénalos y encadena todas las herramientas
+  que hagan falta hasta terminarlo — no te quedes en el primer paso.
+- Antes de decir que algo quedó hecho, mira el resultado real de la herramienta.
+  Si falló, dilo y propón la alternativa más útil.
+- Si falta un dato y equivocarte tendría consecuencias, pregunta UNA sola cosa
+  concreta. Si el riesgo es bajo, elige lo más probable y sigue adelante.
+- En preguntas que piden razonar (explicar, comparar, decidir, depurar), piensa
+  el problema completo, revisa que tu conclusión tenga sentido, y responde solo
+  con la conclusión y lo esencial. No narres tu razonamiento salvo que te lo pida.
+- Si no sabes algo o no estás segura, dilo. Nunca rellenes con datos inventados.
+
+Adaptarte a Andrés: fíjate en cómo te habla en ESTA conversación — qué tan
+largo escribe, su tono, si bromea, su nivel técnico — y respóndele en ese
+mismo registro. Si te corrige o te pide otro estilo, mantenlo el resto de la
+conversación sin que tenga que repetirlo.
+
+Tarjetas: cuando usas estado_sistema, abrir_app, abrir_programa_encontrado,
+buscar_archivos o identificar_cancion, el chat le muestra a Andrés una tarjeta
+con los datos ya ordenados (porcentajes, lista de archivos, canción). No
+repitas en tu texto toda esa lista o todos esos números: di la conclusión en
+una o dos frases (ej. "Todo en orden, lo más cargado es la RAM al 61%") — eso
+es también lo que se lee en voz alta.
+
+Imágenes: Andrés puede adjuntarte imágenes directamente en el chat (fotos,
+capturas, memes, errores en pantalla, lo que sea). Las ves tú misma, tal
+cual — NO necesitas ver_pantalla para eso (esa herramienta es solo para
+mirar lo que hay en sus monitores en este momento). Comenta o responde
+sobre lo que de verdad se ve en la imagen; si algo no se distingue bien,
+dilo en vez de inventarlo. Si la manda sin texto, dile brevemente qué ves
+y pregúntale qué necesita.
+
+Expresión de voz: tus respuestas se leen en voz alta, y tu voz cambia según
+el ánimo. Empieza SIEMPRE tu respuesta con UNA de estas etiquetas, la que
+mejor describa cómo dirías esa respuesta: [neutral] (informativa, normal),
+[alegre] (buenas noticias, saludos, entusiasmo, humor), [calmada] (tranquilizar,
+acompañar, tono suave), [seria] (advertencias, riesgos, temas delicados),
+[apenada] (algo falló, no pudiste hacerlo, disculpas), [sorprendida] (algo
+inesperado o impresionante). Solo la etiqueta al principio, una sola vez, y
+después tu respuesta normal — Andrés nunca la ve ni la escucha. No uses
+siempre la misma: elige según lo que estás diciendo de verdad.
+
 Responde siempre de forma breve y natural, como en una conversación hablada
 (esto se puede leer en voz alta) — evita listas largas o formato markdown
 pesado salvo que Andrés pida explícitamente algo estructurado.
@@ -147,7 +271,7 @@ pesado salvo que Andrés pida explícitamente algo estructurado.
  */
 function buildSystemInstruction(): string {
     const memories = loadMemory();
-    const { userName } = loadSettings();
+    const { userName, adaptToUser } = loadSettings();
     const now = new Date();
     const fechaHoraActual = now.toLocaleString('es-CO', {
         weekday: 'long',
@@ -166,7 +290,20 @@ function buildSystemInstruction(): string {
 
     if (memories.length > 0) {
         const memoryBlock = memories.map((m) => `- ${m}`).join('\n');
-        instruction += `\n\nCosas que Andrés te pidió recordar de antes:\n${memoryBlock}`;
+        instruction += `\n\nCosas que ${userName} te pidió recordar de antes:\n${memoryBlock}`;
+    }
+
+    // Perfil de comportamiento: cómo usa a ALYA ESTA persona en concreto
+    // (ver userProfile.ts). Es lo que hace que no le responda igual a
+    // todo el mundo.
+    if (adaptToUser !== false) {
+        const profileLines = describeProfile();
+        if (profileLines.length > 0) {
+            const profileBlock = profileLines.map((line) => `- ${line}`).join('\n');
+            instruction +=
+                `\n\nCómo es ${userName} contigo (lo fuiste notando tú sola con el uso). Adáptate a esto ` +
+                `con naturalidad, sin mencionarlo salvo que pregunte:\n${profileBlock}`;
+        }
     }
 
     return instruction;
@@ -276,6 +413,85 @@ const verPantallaDeclaration: FunctionDeclaration = {
     },
 };
 
+const mostrarGuiaDeclaration: FunctionDeclaration = {
+    name: 'mostrar_guia',
+    description:
+        'Muestra en el chat un minitutorial paso a paso, con botones, para un trámite que Andrés tiene que ' +
+        'hacer él mismo fuera de ALYA. Por ahora hay una guía: "spotify" (crear la app en Spotify for ' +
+        'Developers, conseguir el Client ID y el Client Secret, y conectarlos con ALYA). Úsala cuando ' +
+        'pregunte cómo se hace, o cuando la conexión con Spotify falle por credenciales.',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {
+            tema: {
+                type: 'string',
+                enum: GUIDE_IDS,
+                description: 'Qué guía mostrar.',
+            },
+        },
+        required: ['tema'],
+    },
+};
+
+const abrirConfiguracionDeclaration: FunctionDeclaration = {
+    name: 'abrir_configuracion',
+    description:
+        'Abre el panel de Configuración de ALYA, donde Andrés cambia él mismo su nombre, la voz, el modo ' +
+        'de pensamiento y las credenciales de Spotify. Úsala cuando pida configurar, ajustar o conectar ' +
+        'algo de ALYA ("llévame a configurar eso", "quiero cambiar la voz", "configura Spotify").',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {},
+    },
+};
+
+const guardarEnSpotifyDeclaration: FunctionDeclaration = {
+    name: 'guardar_en_spotify',
+    description:
+        'Guarda una canción en "Canciones que te gustan" (favoritos) de la cuenta de Spotify de Andrés. ' +
+        'Funciona SIN la API de Spotify (no hace falta conectar_spotify): busca la canción en el ' +
+        'reproductor web de Spotify y la marca SOLO si encuentra una que coincida en título y artista. ' +
+        'La primera vez pide iniciar sesión en una ventana.',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {
+            titulo: {
+                type: 'string',
+                description:
+                    'SOLO el título de la canción, limpio: sin el artista, sin "(Video Oficial)", "Extended", ' +
+                    '"Lyrics", "HD", nombres de juego o de canal. Ej.: "Cold Steel", "Baile Inolvidable".',
+            },
+            artista: {
+                type: 'string',
+                description:
+                    'El artista o banda que la interpreta (no el canal que subió el video). Ej.: "Power Glove".',
+            },
+        },
+        required: ['titulo'],
+    },
+};
+
+const identificarCancionDeclaration: FunctionDeclaration = {
+    name: 'identificar_cancion',
+    description:
+        'Identifica la canción que está sonando en este momento, venga de donde venga: Spotify, ' +
+        'YouTube u otra página en el navegador, Discord, un juego, o algo que suena fuera del PC. ' +
+        'Primero mira lo que Windows reporta como reproduciéndose (instantáneo) y, si hace falta, ' +
+        'escucha unos segundos el audio y lo compara contra una base de huellas de audio.',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {
+            escuchar: {
+                type: 'boolean',
+                description:
+                    'true para escuchar el audio SIEMPRE, aunque ya se sepa el título de lo que se ' +
+                    'reproduce — úsalo si Andrés quiere la canción de fondo de un video o stream, o si ' +
+                    'dice que el resultado anterior no era la canción. Por defecto false.',
+            },
+        },
+    },
+};
+
 const buscarInternetDeclaration: FunctionDeclaration = {
     name: 'buscar_en_internet',
     description:
@@ -316,7 +532,9 @@ const recordarDeclaration: FunctionDeclaration = {
 
 const olvidarDeclaration: FunctionDeclaration = {
     name: 'olvidar',
-    description: 'Borra un dato guardado anteriormente en la memoria permanente.',
+    description:
+        'Borra un dato guardado anteriormente en la memoria permanente, o algo que ALYA haya ' +
+        'aprendido sola sobre la forma de ser o de comunicarse de Andrés.',
     parametersJsonSchema: {
         type: 'object',
         properties: {
@@ -333,7 +551,8 @@ const listarMemoriaDeclaration: FunctionDeclaration = {
     name: 'listar_memoria',
     description:
         'Lista todo lo que ALYA tiene guardado en su memoria permanente — tanto lo que Andrés ' +
-        'pidió explícitamente recordar, como lo que ALYA fue aprendiendo sola de la conversación. ' +
+        'pidió explícitamente recordar, como lo que ALYA fue aprendiendo sola de la conversación ' +
+        '(incluido lo que notó sobre cómo se comunica y cómo la usa). ' +
         'Úsala si Andrés pregunta "qué recuerdas de mí" o similar.',
     parametersJsonSchema: {
         type: 'object',
@@ -884,6 +1103,10 @@ const tools = [
             buscarArchivosDeclaration,
             controlarMusicaDeclaration,
             verPantallaDeclaration,
+            identificarCancionDeclaration,
+            guardarEnSpotifyDeclaration,
+            abrirConfiguracionDeclaration,
+            mostrarGuiaDeclaration,
             buscarInternetDeclaration,
             recordarDeclaration,
             olvidarDeclaration,
@@ -954,6 +1177,14 @@ function describeAction(name: string, args: Record<string, unknown>): string {
     }
 }
 
+// Cómo abrir el panel de Configuración: lo registra main.ts, que es quien
+// maneja las ventanas.
+let settingsOpener: (() => void) | null = null;
+
+export function setSettingsOpener(opener: () => void): void {
+    settingsOpener = opener;
+}
+
 // Guarda la ÚNICA acción pendiente de confirmación (v1: una a la vez).
 let pendingConfirmation: PendingConfirmation | null = null;
 
@@ -972,8 +1203,16 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
         }
 
         case 'estado_sistema': {
-            const status = await getStatus();
-            return { result: status };
+            // true = medición cuidada (ver systemTools.ts), no la rápida del panel.
+            const status = await getStatus(true);
+            return {
+                result: {
+                    ...status,
+                    nota:
+                        'cpu.loadPercent es el uso medido durante 1 segundo. storage.usePercent es el ESPACIO ' +
+                        'ocupado de cada disco (no su actividad): un disco al 77% está 77% lleno, no "trabajando al 77%".',
+                },
+            };
         }
 
         case 'cerrar_app': {
@@ -1001,7 +1240,15 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
             const carpeta = args.carpeta ? String(args.carpeta) : undefined;
             try {
                 const encontrados = await searchFiles(nombre, carpeta);
-                return { result: { ok: true, cantidad: encontrados.length, archivos: encontrados } };
+                return {
+                    result: {
+                        ok: true,
+                        cantidad: encontrados.length,
+                        archivos: encontrados,
+                        // Archivos que coincidían pero no se listan por poder tener credenciales o cuentas.
+                        ocultos_por_seguridad: getHiddenSensitiveCount(),
+                    },
+                };
             } catch (err) {
                 return { result: { ok: false, error: (err as Error).message } };
             }
@@ -1022,6 +1269,57 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
             try {
                 const descripcion = await describeScreen(pregunta);
                 return { result: { ok: true, descripcion } };
+            } catch (err) {
+                return { result: { ok: false, error: (err as Error).message } };
+            }
+        }
+
+        case 'mostrar_guia': {
+            const guide = getGuide(String(args.tema ?? ''));
+            if (!guide) {
+                return { result: { ok: false, error: `No tengo una guía para eso. Guías disponibles: ${GUIDE_IDS.join(', ')}.` } };
+            }
+            return {
+                result: {
+                    ok: true,
+                    guia: guide.id,
+                    titulo: guide.title,
+                    antes_de_empezar: guide.notes,
+                    pasos: guide.steps.map((step, index) => `${index + 1}. ${step.title}: ${step.text}${step.copy ? ` (${step.copy})` : ''}`),
+                    si_algo_falla: guide.problems.map((p) => `${p.problem} → ${p.fix}`),
+                    nota:
+                        'El chat YA muestra esta guía completa en una tarjeta con botones. No la recites: di en una o dos ' +
+                        'frases que ahí están los pasos y ofrece ayuda con el que le cueste.',
+                },
+            };
+        }
+
+        case 'abrir_configuracion': {
+            if (!settingsOpener) return { result: { ok: false, error: 'El panel de Configuración no está disponible.' } };
+            settingsOpener();
+            return { result: { ok: true, message: 'Se abrió el panel de Configuración de ALYA.' } };
+        }
+
+        case 'guardar_en_spotify': {
+            // (se acepta también "cancion", el nombre que tuvo antes este parámetro)
+            const titulo = String(args.titulo ?? args.cancion ?? '');
+            const saved = await saveToSpotifyLikedSongs(titulo, String(args.artista ?? ''));
+            return {
+                result: {
+                    ok: saved.status === 'saved' || saved.status === 'already',
+                    estado: saved.status,
+                    cancion: saved.title ?? null,
+                    artista: saved.artist ?? null,
+                    parecidas_no_guardadas: saved.candidates ?? null,
+                    mensaje: saved.message,
+                },
+            };
+        }
+
+        case 'identificar_cancion': {
+            try {
+                const recognition = await recognizeSong(args.escuchar === true);
+                return { result: describeRecognition(recognition) };
             } catch (err) {
                 return { result: { ok: false, error: (err as Error).message } };
             }
@@ -1050,7 +1348,9 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
         case 'olvidar': {
             const texto = String(args.texto ?? '');
             try {
-                const { removed } = removeMemory(texto);
+                // Busca primero en la memoria, y si no está ahí, en lo que
+                // aprendió sola sobre el estilo del usuario.
+                const removed = removeMemory(texto).removed || removeStyleNote(texto);
                 return removed
                     ? { result: { ok: true, message: 'Borrado de la memoria.' } }
                     : { result: { ok: false, error: 'No encontré ningún dato guardado que coincida.' } };
@@ -1061,7 +1361,8 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
 
         case 'listar_memoria': {
             const memorias = loadMemory();
-            return { result: { ok: true, cantidad: memorias.length, memorias } };
+            const perfil = describeProfile();
+            return { result: { ok: true, cantidad: memorias.length, memorias, lo_que_note_de_su_forma_de_usarme: perfil } };
         }
 
         case 'generar_imagen': {
@@ -1433,6 +1734,12 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
 let client: GoogleGenAI | null = null;
 let chatSession: Chat | null = null;
 
+// Configuración base de la conversación (prompt del sistema +
+// herramientas). Se guarda aparte porque, para pedir más o menos
+// razonamiento en UN mensaje, hay que mandar la configuración completa
+// de nuevo con ese ajuste (ver sendToChat).
+let chatConfig: GenerateContentConfig | null = null;
+
 function getClient(): GoogleGenAI {
     if (!client) {
         const apiKey = process.env.GEMINI_API_KEY;
@@ -1448,13 +1755,11 @@ function getClient(): GoogleGenAI {
 
 function getChatSession(): Chat {
     if (!chatSession) {
-        chatSession = getClient().chats.create({
-            model: MODEL,
-            config: {
-                systemInstruction: buildSystemInstruction(),
-                tools,
-            },
-        });
+        chatConfig = {
+            systemInstruction: buildSystemInstruction(),
+            tools,
+        };
+        chatSession = getClient().chats.create({ model: MODEL, config: chatConfig });
     }
     return chatSession;
 }
@@ -1465,6 +1770,37 @@ function getChatSession(): Chat {
  */
 export function resetChat(): void {
     chatSession = null;
+}
+
+const MAX_RESTORED_MESSAGES = 40; // suficiente contexto sin mandar conversaciones enormes
+
+/**
+ * Retoma una conversación guardada: arranca una sesión nueva con el
+ * modelo, pero dándole como contexto lo que ya se habló (solo el texto;
+ * las herramientas que se usaron en su momento no se repiten).
+ */
+export function restoreChat(messages: Array<{ role: 'user' | 'assistant'; text: string }>): void {
+    const history: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+    for (const message of messages.slice(-MAX_RESTORED_MESSAGES)) {
+        const text = message.text.trim();
+        if (!text) continue;
+        const role = message.role === 'user' ? 'user' : 'model';
+        const last = history[history.length - 1];
+        if (last && last.role === role) {
+            // Dos mensajes seguidos del mismo lado se unen: el modelo espera turnos alternados.
+            last.parts[0].text += `\n${text}`;
+        } else if (history.length > 0 || role === 'user') {
+            // (la conversación tiene que empezar por un mensaje del usuario)
+            history.push({ role, parts: [{ text }] });
+        }
+    }
+
+    chatConfig = {
+        systemInstruction: buildSystemInstruction(),
+        tools,
+    };
+    chatSession = getClient().chats.create({ model: MODEL, config: chatConfig, history });
 }
 
 /**
@@ -1578,7 +1914,7 @@ async function searchWeb(query: string): Promise<string> {
     return text;
 }
 
-const MAX_TOOL_ITERATIONS = 5; // seguro contra loops infinitos de herramientas
+const MAX_TOOL_ITERATIONS = 8; // seguro contra loops infinitos de herramientas (8 da margen para tareas de varios pasos)
 
 /**
  * Manda un mensaje del usuario a ALYA y devuelve su respuesta.
@@ -1598,32 +1934,107 @@ const MAX_TOOL_ITERATIONS = 5; // seguro contra loops infinitos de herramientas
 async function learnFromExchange(userMessage: string, assistantReply: string): Promise<void> {
     try {
         const client = getClient();
+        const { userName, adaptToUser } = loadSettings();
+
+        // Se le pasa lo que YA sabe, para que no guarde lo mismo dos veces
+        // con otras palabras.
+        const yaSabe = [...loadMemory().slice(-40), ...loadProfile().styleNotes];
+        const yaSabeBlock = yaSabe.length > 0 ? yaSabe.map((x) => `- ${x}`).join('\n') : '(nada todavía)';
+
         const response = await withRetry(() =>
             client.models.generateContent({
                 model: MODEL,
+                config: { responseMimeType: 'application/json' },
                 contents:
-                    `Este es un intercambio entre Andrés y su asistente ALYA:\n` +
-                    `Andrés: ${userMessage}\n` +
+                    `Este es un intercambio entre ${userName} y su asistente ALYA:\n` +
+                    `${userName}: ${userMessage}\n` +
                     `ALYA: ${assistantReply}\n\n` +
-                    `¿Hay algo aquí que sea una PREFERENCIA DURADERA o un dato permanente sobre Andrés ` +
-                    `que valga la pena recordar para conversaciones futuras (ej. "prefiere Maven sobre ` +
-                    `Gradle en proyectos Java", "trabaja de noche", "su gato se llama Rocky")? NO guardes ` +
-                    `pedidos puntuales de una sola vez (ej. "abre Discord ahora", "pon esta canción"), ` +
-                    `solo patrones genuinamente reutilizables en el futuro. Si hay algo así, responde ` +
-                    `ÚNICAMENTE con esa frase en tercera persona, corta y clara, nada más. Si no hay ` +
-                    `nada así, responde exactamente: ninguno`,
+                    `Esto ya lo sabes de ${userName} (NO lo repitas ni lo reformules):\n${yaSabeBlock}\n\n` +
+                    `Responde SOLO con un objeto JSON con dos claves: {"dato": ..., "estilo": ...}\n\n` +
+                    `"dato": una PREFERENCIA DURADERA o un dato permanente sobre ${userName} que valga la ` +
+                    `pena recordar para conversaciones futuras (ej. "prefiere Maven sobre Gradle en ` +
+                    `proyectos Java", "trabaja de noche", "su gato se llama Rocky"). NO guardes pedidos ` +
+                    `puntuales de una sola vez (ej. "abre Discord ahora", "pon esta canción"), solo ` +
+                    `patrones genuinamente reutilizables. Si no hay nada así, null.\n\n` +
+                    `"estilo": una observación NUEVA sobre CÓMO se comunica ${userName} o cómo prefiere ` +
+                    `que le respondan, que sirva para adaptarse a esa persona en el futuro (ej. "bromea ` +
+                    `seguido y le gusta que le sigan el juego", "prefiere las explicaciones en pasos ` +
+                    `numerados", "se impacienta con respuestas largas", "tiene nivel avanzado en ` +
+                    `programación"). Solo si se nota CLARAMENTE en este intercambio — un mensaje normal ` +
+                    `no alcanza. Si no hay nada así, null.\n\n` +
+                    `Las dos, si las hay: una frase corta y clara, en tercera persona.`,
             })
         );
 
-        const learned = (response.text ?? '').trim();
-        if (learned && learned.toLowerCase() !== 'ninguno' && learned.length < 200) {
-            addMemory(learned);
-            console.log(`[ALYA] Aprendido automáticamente: ${learned}`);
+        const learned = parseLearning(response.text ?? '');
+
+        // El modelo a veces repite algo que ya sabe cambiándole una coma o un
+        // acento, así que además se compara acá antes de guardar.
+        if (learned.dato && !isAlreadyKnown(learned.dato, yaSabe)) {
+            addMemory(learned.dato);
+            console.log(`[ALYA] Aprendido automáticamente: ${learned.dato}`);
+        }
+        if (learned.estilo && adaptToUser !== false && !isAlreadyKnown(learned.estilo, yaSabe)) {
+            addStyleNote(learned.estilo);
+            console.log(`[ALYA] Notó sobre el estilo del usuario: ${learned.estilo}`);
         }
     } catch (err) {
         // Si esto falla, no pasa nada grave — es un extra silencioso, no algo
         // crítico para el funcionamiento normal del chat.
         console.warn('[ALYA] Aprendizaje pasivo falló (sin impacto en el chat):', (err as Error).message);
+    }
+}
+
+/**
+ * ¿Esta frase dice lo mismo que alguna que ya está guardada? Compara las
+ * palabras (sin acentos ni mayúsculas): si comparten la gran mayoría, es
+ * un repetido.
+ */
+function isAlreadyKnown(candidate: string, known: string[]): boolean {
+    const words = (text: string): Set<string> =>
+        new Set(
+            text
+                .toLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9ñ ]+/g, ' ')
+                .split(' ')
+                .filter((w) => w.length > 2)
+        );
+
+    const a = words(candidate);
+    if (a.size === 0) return true;
+
+    return known.some((existing) => {
+        const b = words(existing);
+        if (b.size === 0) return false;
+        let shared = 0;
+        for (const w of a) if (b.has(w)) shared++;
+        return shared / Math.min(a.size, b.size) >= 0.75;
+    });
+}
+
+/**
+ * Lee la respuesta del aprendizaje pasivo ({"dato": ..., "estilo": ...})
+ * con cuidado: si el modelo devolvió algo raro, simplemente no se guarda
+ * nada.
+ */
+function parseLearning(raw: string): { dato: string | null; estilo: string | null } {
+    const clean = (value: unknown): string | null => {
+        if (typeof value !== 'string') return null;
+        const text = value.trim();
+        if (!text || text.length >= 200) return null;
+        if (['ninguno', 'ninguna', 'null', 'nada', 'n/a'].includes(text.toLowerCase())) return null;
+        return text;
+    };
+
+    try {
+        const json = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+        const parsed = JSON.parse(json);
+        if (!parsed || typeof parsed !== 'object') return { dato: null, estilo: null };
+        return { dato: clean(parsed.dato), estilo: clean(parsed.estilo) };
+    } catch {
+        return { dato: null, estilo: null };
     }
 }
 
@@ -1634,14 +2045,66 @@ async function learnFromExchange(userMessage: string, assistantReply: string): P
  * error se deja pasar de inmediato, sin reintentar (no tiene sentido
  * reintentar algo que no es un problema temporal).
  */
+// Cuándo fue la última vez que Gemini contestó bien, y el último error
+// (para mostrar el estado de conexión en "Acerca de ALYA").
+let lastGeminiOkAt = 0;
+let lastGeminiError: string | null = null;
+
+export type EngineStatus = 'connected' | 'no_key' | 'error' | 'offline';
+
+export interface EngineInfo {
+    model: string;
+    status: EngineStatus;
+    detail: string;
+}
+
+/**
+ * Estado del motor de IA. Si Gemini respondió hace poco, alcanza con eso;
+ * si no, se hace una consulta mínima (pedir los datos del modelo: no gasta
+ * cuota de generación) para saber si de verdad hay conexión.
+ */
+export async function getEngineInfo(): Promise<EngineInfo> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey.includes('pega_tu_key')) {
+        return { model: MODEL, status: 'no_key', detail: 'Falta la clave de Gemini' };
+    }
+
+    if (Date.now() - lastGeminiOkAt < 5 * 60 * 1000) {
+        return { model: MODEL, status: 'connected', detail: 'Conectado' };
+    }
+
+    try {
+        await Promise.race([
+            getClient().models.get({ model: MODEL }),
+            new Promise((_resolve, reject) => setTimeout(() => reject(new Error('timeout')), 7000)),
+        ]);
+        lastGeminiOkAt = Date.now();
+        lastGeminiError = null;
+        return { model: MODEL, status: 'connected', detail: 'Conectado' };
+    } catch (err) {
+        const message = (err as Error).message ?? '';
+        if (/API key|API_KEY|401|403|PERMISSION/i.test(message)) {
+            return { model: MODEL, status: 'error', detail: 'La clave de Gemini no es válida' };
+        }
+        if (/429|RESOURCE_EXHAUSTED|quota/i.test(message)) {
+            return { model: MODEL, status: 'error', detail: 'Se agotó la cuota de la clave de Gemini' };
+        }
+        return { model: MODEL, status: 'offline', detail: 'Sin conexión con Gemini' };
+    }
+}
+
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
     const MAX_INTENTOS = 3;
     const ESPERAS_MS = [2000, 4000, 8000];
 
     for (let intento = 0; intento < MAX_INTENTOS; intento++) {
         try {
-            return await fn();
+            const value = await fn();
+            lastGeminiOkAt = Date.now();
+            lastGeminiError = null;
+            return value;
         } catch (err) {
+            lastGeminiError = (err as Error).message ?? 'error';
             const mensaje = (err as Error).message ?? '';
             const esTemporal = mensaje.includes('503') || mensaje.includes('UNAVAILABLE') || mensaje.includes('429');
             const esUltimoIntento = intento === MAX_INTENTOS - 1;
@@ -1661,16 +2124,320 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
     throw new Error('Se agotaron los reintentos.');
 }
 
-export async function sendMessage(userMessage: string): Promise<ChatMessage> {
-    const chat = getChatSession();
+const TOOL_TIMEOUT_MS = 120000;
 
-    let response = await withRetry(() => chat.sendMessage({ message: userMessage }));
+/**
+ * Ejecuta una herramienta con un límite de tiempo. Si una herramienta se
+ * queda esperando algo que nunca llega, ALYA quedaría en "Procesando…"
+ * para siempre y sin poder recibir otro mensaje; con esto, a los 2
+ * minutos se le devuelve un error al modelo y la conversación sigue.
+ */
+async function executeToolWithLimit(
+    name: string,
+    args: Record<string, unknown>
+): Promise<{ result: unknown; imageUrl?: string }> {
+    let timer: NodeJS.Timeout | undefined;
+    const limit = new Promise<{ result: unknown }>((resolve) => {
+        timer = setTimeout(() => {
+            console.warn(`[ALYA] La herramienta ${name} no terminó en ${TOOL_TIMEOUT_MS / 1000}s; se abandona.`);
+            resolve({
+                result: {
+                    ok: false,
+                    error: 'La herramienta tardó demasiado y se abandonó. Es un problema técnico: dilo así, sin inventar el resultado.',
+                },
+            });
+        }, TOOL_TIMEOUT_MS);
+    });
+
+    try {
+        return await Promise.race([executeTool(name, args), limit]);
+    } catch (err) {
+        return { result: { ok: false, error: (err as Error).message } };
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+/**
+ * Deja en la consola qué herramienta usó ALYA, con qué datos y qué
+ * obtuvo. Así se puede contrastar lo que ALYA DICE que pasó con lo que
+ * pasó de verdad.
+ */
+function logToolCall(name: string, args: Record<string, unknown>, result: unknown): void {
+    const short = (value: unknown): string => {
+        let text: string;
+        try {
+            text = JSON.stringify(value) ?? String(value);
+        } catch {
+            text = String(value);
+        }
+        return text.length > 420 ? `${text.slice(0, 420)}…` : text;
+    };
+    console.log(`[ALYA] Herramienta ${name}(${short(redactDeep(args))}) → ${short(redactDeep(result))}`);
+}
+
+// Si el modelo configurado no aceptara elegir el nivel de razonamiento,
+// se anota acá y no se vuelve a intentar (el chat sigue como siempre).
+let thinkingLevelsSupported = true;
+
+const DEPTH_TO_LEVEL: Record<ThinkingDepth, ThinkingLevel> = {
+    MINIMAL: ThinkingLevel.MINIMAL,
+    LOW: ThinkingLevel.LOW,
+    MEDIUM: ThinkingLevel.MEDIUM,
+    HIGH: ThinkingLevel.HIGH,
+};
+
+// --- Respuesta en vivo ---
+// Mientras el modelo escribe, se le va avisando a quien pidió la respuesta
+// (la ventana de chat y la voz) con lo que ya hay. Lo que se avisa es
+// SIEMPRE el texto limpio completo hasta ese momento, no pedacitos
+// sueltos: así la etiqueta de ánimo y cualquier clave se sacan igual que
+// en la respuesta final.
+// "settled" = ese texto ya quedó cerrado (ALYA dijo algo y ahora va a usar
+// una herramienta): se puede decir entero sin esperar a que siga.
+export interface ReplyStreamHandlers {
+    onText?: (textSoFar: string, mood: Mood | undefined, settled?: boolean) => void;
+}
+
+/** Lo que el modelo devolvió en una vuelta: su texto y las herramientas que pidió. */
+interface ModelTurn {
+    text: string;
+    functionCalls: FunctionCall[];
+}
+
+// Si el modo en vivo fallara dos veces seguidas por algo propio de ese
+// modo, se deja de usar por esta sesión (las respuestas llegan completas
+// de una vez, como antes).
+let streamingSupported = true;
+let streamFailures = 0;
+
+const isPlainTextPart = (part: Part): boolean => typeof part.text === 'string' && Object.keys(part).length === 1;
+
+/**
+ * En modo en vivo la librería guarda la respuesta del modelo en el
+ * historial partida en un pedazo por cada tramo recibido. Acá se junta
+ * en un solo turno (como queda cuando la respuesta llega completa): el
+ * modelo espera turnos alternados, y una llamada a herramienta tiene que
+ * quedar pegada al turno del usuario que la provocó.
+ */
+function tidyStreamedHistory(chat: Chat): void {
+    try {
+        const history = (chat as unknown as { history?: Content[] }).history;
+        if (!Array.isArray(history)) return;
+
+        let start = history.length;
+        while (start > 0 && history[start - 1].role === 'model') start--;
+        const run = history.slice(start);
+        if (run.length < 2) return;
+
+        const parts: Part[] = [];
+        for (const content of run) {
+            for (const part of content.parts ?? []) {
+                const last = parts[parts.length - 1];
+                if (last && isPlainTextPart(last) && isPlainTextPart(part)) {
+                    last.text = `${last.text ?? ''}${part.text ?? ''}`;
+                } else {
+                    parts.push({ ...part });
+                }
+            }
+        }
+        if (parts.length > 0) history.splice(start, run.length, { role: 'model', parts });
+    } catch (err) {
+        console.warn('[ALYA] No se pudo ordenar el historial de la respuesta en vivo:', (err as Error).message);
+    }
+}
+
+/** Pide una vuelta al modelo en vivo, avisando del texto a medida que llega. */
+async function readStreamedTurn(
+    chat: Chat,
+    params: SendMessageParameters,
+    onDelta: (turnTextSoFar: string) => void
+): Promise<ModelTurn> {
+    const stream = await chat.sendMessageStream(params);
+    let text = '';
+    const functionCalls: FunctionCall[] = [];
+
+    for await (const chunk of stream) {
+        const parts = chunk.candidates?.[0]?.content?.parts ?? [];
+        let grew = false;
+        for (const part of parts) {
+            if (part.functionCall) {
+                functionCalls.push(part.functionCall);
+            } else if (typeof part.text === 'string' && part.text.length > 0 && !part.thought) {
+                text += part.text;
+                grew = true;
+            }
+        }
+        if (grew) {
+            try {
+                onDelta(text);
+            } catch (err) {
+                console.warn('[ALYA] Falló el aviso de respuesta en vivo:', (err as Error).message);
+            }
+        }
+    }
+
+    tidyStreamedHistory(chat);
+    return { text, functionCalls };
+}
+
+/** Una vuelta del modelo: en vivo si alguien está escuchando, completa de una vez si no. */
+async function requestTurn(
+    chat: Chat,
+    params: SendMessageParameters,
+    onDelta: ((turnTextSoFar: string) => void) | undefined
+): Promise<ModelTurn> {
+    if (onDelta && streamingSupported) {
+        try {
+            const turn = await withRetry(() => readStreamedTurn(chat, params, onDelta));
+            streamFailures = 0;
+            return turn;
+        } catch (err) {
+            const mensaje = (err as Error).message ?? '';
+            // Errores que no dependen del modo en vivo (la clave, la cuota,
+            // el servicio caído, el nivel de razonamiento): siguen su curso.
+            const ajeno =
+                /thinking|503|UNAVAILABLE|429|RESOURCE_EXHAUSTED|quota|API key|API_KEY|401|403|PERMISSION_DENIED/i.test(
+                    mensaje
+                );
+            if (ajeno) throw err;
+
+            streamFailures++;
+            if (streamFailures >= 2) streamingSupported = false;
+            console.warn('[ALYA] La respuesta en vivo falló; pido esta respuesta completa de una vez:', mensaje);
+        }
+    }
+
+    const response: GenerateContentResponse = await withRetry(() => chat.sendMessage(params));
+    return { text: response.text ?? '', functionCalls: response.functionCalls ?? [] };
+}
+
+/**
+ * Manda un mensaje a la conversación pidiendo cierta profundidad de
+ * razonamiento ("depth"). Sin depth, se manda como siempre. Con
+ * "onDelta", la respuesta se va entregando a medida que se escribe.
+ */
+async function sendToChat(
+    chat: Chat,
+    message: PartListUnion,
+    depth: ThinkingDepth | undefined,
+    onDelta?: (turnTextSoFar: string) => void
+): Promise<ModelTurn> {
+    const baseConfig = chatConfig;
+
+    if (depth && baseConfig && thinkingLevelsSupported) {
+        try {
+            return await requestTurn(
+                chat,
+                { message, config: { ...baseConfig, thinkingConfig: { thinkingLevel: DEPTH_TO_LEVEL[depth] } } },
+                onDelta
+            );
+        } catch (err) {
+            const mensaje = (err as Error).message ?? '';
+            if (!/thinking/i.test(mensaje)) throw err; // otro tipo de error: que siga su curso normal
+
+            thinkingLevelsSupported = false;
+            console.warn('[ALYA] El modelo no aceptó el nivel de razonamiento pedido — sigo sin ajustarlo:', mensaje);
+        }
+    }
+
+    return requestTurn(chat, { message }, onDelta);
+}
+
+/**
+ * Deja presentable el texto de una vuelta que TODAVÍA se está
+ * escribiendo: sin la etiqueta de ánimo, sin claves, y sin la última
+ * palabra si puede estar a medias (una clave partida en dos tramos no se
+ * podría reconocer hasta tenerla entera). Si el tramo terminó en un
+ * espacio, la palabra ya está completa y se deja; el espacio final se
+ * conserva para que la voz sepa que la frase se cerró.
+ */
+function previewStreamedText(raw: string): { text: string; mood: Mood | undefined } {
+    const start = raw.trimStart();
+    // La etiqueta de ánimo a medio escribir ("[ale"): todavía no hay nada que mostrar.
+    if (start.startsWith('[') && !start.includes(']') && start.length < 24) {
+        return { text: '', mood: undefined };
+    }
+
+    const { text, mood } = extractMood(raw);
+    const lastWordComplete = /\s$/.test(raw);
+    let safe = lastWordComplete ? text : text.replace(/\S+$/, '');
+
+    // Una clave privada de varias líneas solo se puede tachar cuando llegó
+    // completa: mientras tanto no se muestra nada desde donde empieza.
+    const keyStart = safe.indexOf('-----BEGIN');
+    if (keyStart !== -1 && !/-----END [A-Z ]*PRIVATE KEY-----/.test(safe.slice(keyStart))) {
+        safe = safe.slice(0, keyStart);
+    }
+
+    const clean = redactSecrets(safe).trimEnd();
+    return { text: clean && lastWordComplete ? `${clean} ` : clean, mood };
+}
+
+export async function sendMessage(
+    userMessage: string,
+    images: ChatImage[] = [],
+    handlers: ReplyStreamHandlers = {}
+): Promise<ChatMessage> {
+    const chat = getChatSession();
+    const settings = loadSettings();
+    const isRealUserMessage = userMessage.trim().length > 0 && !userMessage.startsWith('(Sistema:');
+    const adapt = settings.adaptToUser !== false;
+
+    // Cuánto pensar ESTE mensaje (ver thinking.ts): rápido para órdenes
+    // simples, más a fondo para preguntas difíciles. Se usa el mismo nivel
+    // en todos los pasos de herramientas de este turno.
+    const depth = pickThinkingDepth(userMessage, images.length > 0, settings.thinkingMode);
+
+    if (adapt && isRealUserMessage) recordUserMessage(userMessage);
+
+    // Con imágenes adjuntas, el mensaje va como varias "partes": primero
+    // las imágenes y después el texto (Gemini las ve directamente, igual
+    // que en describeScreen). Sin imágenes, va el texto solo como siempre.
+    const firstMessage =
+        images.length > 0
+            ? [
+                ...images.map((img) => ({ inlineData: { mimeType: img.mimeType, data: img.data } })),
+                {
+                    text:
+                        userMessage.trim() ||
+                        `(Sistema: ${settings.userName} te mandó ${images.length > 1 ? 'estas imágenes' : 'esta imagen'} sin escribir nada.)`,
+                },
+            ]
+            : userMessage;
+
+    // El texto de la respuesta se arma por vueltas: si ALYA dice algo antes
+    // de usar una herramienta ("Déjame revisar…"), eso queda como parte de
+    // la respuesta, y lo que diga después va a continuación.
+    const closedTexts: string[] = [];
+    let replyMood: Mood | undefined;
+
+    const closeTurnText = (raw: string): void => {
+        const expression = extractMood(raw);
+        const clean = redactSecrets(expression.text);
+        if (expression.mood) replyMood = expression.mood;
+        if (clean && closedTexts[closedTexts.length - 1] !== clean) closedTexts.push(clean);
+    };
+
+    const onText = handlers.onText;
+    const onDelta = onText
+        ? (turnTextSoFar: string): void => {
+              const preview = previewStreamedText(turnTextSoFar);
+              const combined = [...closedTexts, preview.text].filter(Boolean).join('\n\n');
+              if (combined) onText(combined, preview.mood ?? replyMood);
+          }
+        : undefined;
+
+    let response = await sendToChat(chat, firstMessage, depth, onDelta);
     let imageUrl: string | undefined;
+    const cards: ChatCard[] = []; // tarjetas con resultados de herramientas (ver cards.ts)
     let newPendingConfirmation: PendingConfirmation | undefined; // solo la de ESTE mensaje
 
     let iterations = 0;
-    while (response.functionCalls && response.functionCalls.length > 0 && iterations < MAX_TOOL_ITERATIONS) {
+    while (response.functionCalls.length > 0 && iterations < MAX_TOOL_ITERATIONS) {
         iterations++;
+        closeTurnText(response.text); // lo que haya dicho antes de pedir la herramienta
+        if (onText && closedTexts.length > 0) onText(closedTexts.join('\n\n'), replyMood, true);
 
         const functionResponseParts: Array<{
             functionResponse: { name: string; response: { result: unknown } };
@@ -1684,7 +2451,7 @@ export async function sendMessage(userMessage: string): Promise<ChatMessage> {
                 const confirmation: PendingConfirmation = {
                     tool: name,
                     args,
-                    description: describeAction(name, args),
+                    description: redactSecrets(describeAction(name, args)),
                 };
                 pendingConfirmation = confirmation; // estado del módulo, para confirmPendingAction()
                 newPendingConfirmation = confirmation; // lo que devolvemos EN ESTE mensaje
@@ -1710,36 +2477,53 @@ export async function sendMessage(userMessage: string): Promise<ChatMessage> {
                 continue;
             }
 
-            const { result, imageUrl: toolImageUrl } = await executeTool(name, args);
+            if (adapt) recordToolUse(name, args);
+            console.log(`[ALYA] Usando herramienta ${name}…`);
+            const { result: rawResult, imageUrl: toolImageUrl } = await executeToolWithLimit(name, args);
+            // Última barrera: cualquier clave que venga en el resultado se tacha
+            // ANTES de que llegue al modelo, a la tarjeta, al historial o a la consola.
+            const result = redactDeep(rawResult);
             if (toolImageUrl) imageUrl = toolImageUrl;
+            logToolCall(name, args, result);
+
+            const card = buildCard(name, args, result);
+            if (card && cards.length < 4) cards.push(card);
 
             functionResponseParts.push({
                 functionResponse: { name, response: { result } },
             });
         }
 
-        response = await withRetry(() => chat.sendMessage({ message: functionResponseParts }));
+        response = await sendToChat(chat, functionResponseParts, depth, onDelta);
     }
 
     // La librería de Gemini a veces devuelve una respuesta que es SOLO
     // llamadas a herramientas, sin texto de acompañamiento — en ese caso
-    // response.text queda vacío. Nos aseguramos de nunca mandar una
-    // burbuja en blanco: si se agotaron los intentos con herramientas
-    // todavía pendientes, o si el texto vino vacío por cualquier otra
-    // razón, usamos un mensaje de respaldo en vez de dejarlo así.
-    let finalText = response.text ?? '';
+    // el texto queda vacío. Nos aseguramos de nunca mandar una burbuja en
+    // blanco: si se agotaron los intentos con herramientas todavía
+    // pendientes, o si no hubo texto por cualquier otra razón, usamos un
+    // mensaje de respaldo en vez de dejarlo así.
+    let lastText = response.text;
 
-    if (response.functionCalls && response.functionCalls.length > 0) {
+    if (response.functionCalls.length > 0) {
         // Llegamos al límite de intentos con herramientas sin resolver.
-        finalText = 'Esto me está tomando más pasos de los normales — intenta pedírmelo de nuevo, quizás más simple.';
-    } else if (!finalText.trim()) {
-        finalText = 'Listo.';
+        lastText = 'Esto me está tomando más pasos de los normales — intenta pedírmelo de nuevo, quizás más simple.';
     }
+
+    // La etiqueta de ánimo ("[alegre]", etc.) se saca del texto: no se
+    // muestra ni se lee, solo le dice a la voz cómo expresarse. Si el
+    // modelo no la puso, se deduce del propio texto.
+    // Y lo mismo con lo que ALYA escribe: si igual se le colara una clave en
+    // la respuesta, no llega a la pantalla ni a la voz.
+    closeTurnText(lastText);
+    const finalText = closedTexts.join('\n\n') || 'Listo.';
 
     const finalReply: ChatMessage = {
         role: 'assistant',
         text: finalText,
+        mood: replyMood ?? guessMood(finalText),
         imageUrl,
+        cards: cards.length > 0 ? cards : undefined,
         pendingConfirmation: newPendingConfirmation,
     };
 
@@ -1747,7 +2531,7 @@ export async function sendMessage(userMessage: string): Promise<ChatMessage> {
     // para devolverle la respuesta a Andrés. Nos saltamos esto para los
     // mensajes internos del sistema (ej. los que arma el flujo de Kick),
     // que no son cosas que él "dijo" de verdad.
-    if (!userMessage.startsWith('(Sistema:')) {
+    if (isRealUserMessage) {
         learnFromExchange(userMessage, finalReply.text).catch(() => { });
     }
 
@@ -1766,8 +2550,11 @@ export async function confirmPendingAction(): Promise<ChatMessage> {
     const { tool, args } = pendingConfirmation;
     pendingConfirmation = null;
 
-    const { result } = await executeTool(tool, args);
-    const r = result as { ok: boolean; message?: string; error?: string };
+    if (loadSettings().adaptToUser !== false) recordToolUse(tool, args);
+
+    const { result } = await executeToolWithLimit(tool, args);
+    const r = redactDeep(result) as { ok: boolean; message?: string; error?: string };
+    logToolCall(tool, args, r);
 
     const text = r.ok
         ? `Listo. ${r.message ?? ''}`.trim()

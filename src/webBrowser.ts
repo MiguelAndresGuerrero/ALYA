@@ -1,4 +1,6 @@
 import { BrowserWindow, shell, session } from 'electron';
+import * as fs from 'fs';
+import * as path from 'path';
 import { getResourcePath } from './resourcePaths';
 
 // Ventana INVISIBLE, solo para buscar en YouTube (encontrar la URL del
@@ -56,9 +58,6 @@ export async function initializePlayerSession(): Promise<void> {
 const EXTENSIONS_DIR = getResourcePath('extensions');
 
 async function loadSideloadedExtensions(playerSession: Electron.Session): Promise<void> {
-    const fs = await import('fs');
-    const path = await import('path');
-
     if (!fs.existsSync(EXTENSIONS_DIR)) return;
 
     const folders = fs.readdirSync(EXTENSIONS_DIR, { withFileTypes: true }).filter((e) => e.isDirectory());

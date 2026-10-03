@@ -5,18 +5,64 @@
     <meta charset="UTF-8" />
     <title>ALYA</title>
     <style>
+        /* ============================================================
+           ALYA — ventana principal
+           Regla de color: negro ~70%, azul ~15%, morado ~10%, y el
+           cian/magenta solo como acento. El color "de estado" (--state)
+           cambia según lo que ALYA esté haciendo; lo usan el avatar, el
+           punto de estado y el brillo del compositor.
+           ============================================================ */
         :root {
-            --bg: #0a0e14;
-            --panel: #121821;
-            --panel-border: #202b38;
-            --pink: #ff5ea8;
-            --cyan: #4fd1ff;
-            --text: #e4edf5;
-            --dim: #6c7c8c;
-            --danger: #ff5f5f;
-            --danger-bg: #2a1518;
-            --danger-border: #5c2c30;
+            --bg: #070B12;
+            --panel: #0B111A;
+            --panel-2: #101824;
+            --panel-3: #162031;
+            --line: rgba(130, 170, 220, 0.09);
+            --line-strong: rgba(130, 170, 220, 0.17);
+
+            --blue: #39C6FF;
+            --cyan: #63E6FF;
+            --violet: #8B5CFF;
+            --magenta: #D85CFF;
+
+            --text: #EAF2FF;
+            --dim: #718096;
+            --dim-2: #4B5A70;
+
+            --ok: #4ADE80;
+            --warn: #FBBF24;
+            --danger: #FF6B6B;
+
+            --state: var(--blue);
+            --state-2: var(--violet);
+
+            --sidebar-w: 252px;
+
+            /* Fondo de nebulosa. En desarrollo sale de esta ruta relativa;
+               ya instalada, main.ts manda la ruta real y se reemplaza. */
+            --backdrop-image: url('../build/background.jpg');
+            --sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
             --mono: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+        }
+
+        body[data-state="listening"] {
+            --state: var(--cyan);
+            --state-2: var(--blue);
+        }
+
+        body[data-state="thinking"] {
+            --state: var(--violet);
+            --state-2: var(--magenta);
+        }
+
+        body[data-state="speaking"] {
+            --state: var(--blue);
+            --state-2: var(--cyan);
+        }
+
+        body[data-state="error"] {
+            --state: var(--danger);
+            --state-2: #FF9F6B;
         }
 
         * {
@@ -32,205 +78,732 @@
         body {
             display: flex;
             flex-direction: column;
-            background:
-                linear-gradient(rgba(79, 209, 255, 0.035) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(79, 209, 255, 0.035) 1px, transparent 1px),
-                var(--bg);
-            background-size: 22px 22px, 22px 22px, auto;
+            background: var(--bg);
             color: var(--text);
-            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-family: var(--sans);
+            font-size: 13px;
+            overflow: hidden;
         }
 
-        /* Marcos de esquina tipo HUD, reutilizables en cualquier tarjeta/burbuja */
-        .hud-corners {
-            position: relative;
+        button {
+            font-family: inherit;
+            color: inherit;
         }
 
-        .hud-corners::before,
-        .hud-corners::after {
+        /* ---------- Fondo ---------- */
+        /* La imagen ocupa toda la ventana; encima va un velo que oscurece
+           los bordes (para que la cabecera y el compositor se lean bien) y
+           que se cierra un poco más cuando hay conversación, así el texto
+           de los mensajes nunca compite con las nubes. */
+        .backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            background: var(--bg) var(--backdrop-image) center / cover no-repeat;
+        }
+
+        .backdrop::after {
             content: '';
             position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 90% 80% at 50% 44%, transparent 35%, rgba(4, 7, 12, 0.55) 100%),
+                linear-gradient(180deg, rgba(4, 7, 12, 0.35), transparent 22%, transparent 68%, rgba(4, 7, 12, 0.6));
+            transition: background-color 0.4s;
+        }
+
+        body.in-chat .backdrop::after {
+            background-color: rgba(4, 7, 12, 0.42);
+        }
+
+        svg.ic {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        ::-webkit-scrollbar {
             width: 8px;
-            height: 8px;
-            pointer-events: none;
-            opacity: 0.7;
         }
 
-        .hud-corners::before {
-            top: -1px;
-            left: -1px;
-            border-top: 2px solid var(--cyan);
-            border-left: 2px solid var(--cyan);
+        ::-webkit-scrollbar-track {
+            background: transparent;
         }
 
-        .hud-corners::after {
-            bottom: -1px;
-            right: -1px;
-            border-bottom: 2px solid var(--pink);
-            border-right: 2px solid var(--pink);
+        ::-webkit-scrollbar-thumb {
+            background: rgba(130, 170, 220, 0.14);
+            border-radius: 4px;
         }
 
-        /* ---------- Header ---------- */
-        header {
-            padding: 14px 18px;
-            border-bottom: 1px solid var(--panel-border);
-            background: linear-gradient(180deg, rgba(255, 94, 168, 0.06), rgba(79, 209, 255, 0.03) 60%, transparent);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-shrink: 0;
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(130, 170, 220, 0.26);
         }
 
-        .brand {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-        }
-
-        .brand-mark {
-            width: 30px;
-            height: 30px;
+        /* ---------- Núcleo de ALYA (avatar + anillo de estado) ---------- */
+        .core {
+            --size: 36px;
+            --ring: 2px;
+            --gap: 3px;
+            position: relative;
+            width: var(--size);
+            height: var(--size);
             border-radius: 50%;
-            background: conic-gradient(from 200deg, var(--pink), var(--cyan), var(--pink));
-            display: flex;
-            align-items: center;
-            justify-content: center;
             flex-shrink: 0;
-            padding: 2px;
-            box-shadow: 0 0 14px rgba(79, 209, 255, 0.45), 0 0 6px rgba(255, 94, 168, 0.3);
         }
 
-        .brand-mark img {
+        .core-lg {
+            --size: 132px;
+            --ring: 3px;
+            --gap: 7px;
+        }
+
+        .core-md {
+            --size: 72px;
+            --ring: 2px;
+            --gap: 5px;
+        }
+
+        .core-img {
+            position: absolute;
+            inset: 0;
             width: 100%;
             height: 100%;
             border-radius: 50%;
             object-fit: cover;
             display: block;
+            background: var(--panel-2);
         }
 
-        .brand-text h1 {
+        /* Anillo: un degradado cónico recortado en forma de aro, que gira. */
+        .core-ring {
+            position: absolute;
+            inset: calc((var(--ring) + var(--gap)) * -1);
+            border-radius: 50%;
+            background: conic-gradient(from 0deg,
+                    var(--state), transparent 26%, var(--state-2) 50%, transparent 76%, var(--state));
+            -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring) - 0.5px), #000 calc(100% - var(--ring)));
+            mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring) - 0.5px), #000 calc(100% - var(--ring)));
+            animation: core-spin 16s linear infinite;
+            transition: opacity 0.3s;
+        }
+
+        /* Resplandor suave que "respira". */
+        .core-glow {
+            position: absolute;
+            inset: calc(var(--gap) * -1);
+            border-radius: 50%;
+            box-shadow: 0 0 calc(var(--size) * 0.28) color-mix(in srgb, var(--state) 38%, transparent);
+            animation: core-breathe 5s ease-in-out infinite;
+            transition: box-shadow 0.4s;
+        }
+
+        /* Ondas: solo se ven al escuchar y al hablar. */
+        .core-wave {
+            position: absolute;
+            inset: calc((var(--ring) + var(--gap)) * -1);
+            border-radius: 50%;
+            border: 1.5px solid var(--state);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        body[data-state="listening"] .core-wave {
+            animation: core-wave 1.9s ease-out infinite;
+        }
+
+        body[data-state="speaking"] .core-wave {
+            animation: core-wave 1.15s ease-out infinite;
+        }
+
+        .core-wave:nth-of-type(2) {
+            animation-delay: 0.45s !important;
+        }
+
+        .core-wave:nth-of-type(3) {
+            animation-delay: 0.9s !important;
+        }
+
+        body[data-state="thinking"] .core-ring {
+            animation-duration: 2.4s;
+        }
+
+        body[data-state="thinking"] .core-glow {
+            animation: core-pulse 1.5s ease-in-out infinite;
+        }
+
+        body[data-state="speaking"] .core-ring {
+            animation-duration: 7s;
+        }
+
+        body[data-state="speaking"] .core-glow {
+            animation: core-pulse 0.55s ease-in-out infinite;
+        }
+
+        body[data-state="error"] .core-ring {
+            animation-duration: 30s;
+        }
+
+        @keyframes core-spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes core-breathe {
+
+            0%,
+            100% {
+                opacity: 0.55;
+            }
+
+            50% {
+                opacity: 1;
+            }
+        }
+
+        @keyframes core-pulse {
+
+            0%,
+            100% {
+                opacity: 0.45;
+                transform: scale(0.97);
+            }
+
+            50% {
+                opacity: 1;
+                transform: scale(1.04);
+            }
+        }
+
+        @keyframes core-wave {
+            0% {
+                opacity: 0.55;
+                transform: scale(1);
+            }
+
+            100% {
+                opacity: 0;
+                transform: scale(1.55);
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+
+            .core-ring,
+            .core-glow,
+            .core-wave {
+                animation: none !important;
+            }
+        }
+
+        /* ---------- Cabecera ---------- */
+        .topbar {
+            flex-shrink: 0;
+            height: 58px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 0 14px 0 10px;
+            background: rgba(8, 12, 20, 0.58);
+            -webkit-backdrop-filter: blur(18px) saturate(1.25);
+            backdrop-filter: blur(18px) saturate(1.25);
+            border-bottom: 1px solid var(--line);
+            position: relative;
+            z-index: 30;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 13px;
+            margin-left: 6px;
+            min-width: 0;
+        }
+
+        .wordmark {
             font-size: 14px;
-            letter-spacing: 4px;
-            margin: 0;
             font-weight: 700;
-            background: linear-gradient(90deg, var(--pink), var(--cyan));
+            letter-spacing: 4px;
+            background: linear-gradient(90deg, var(--text), var(--cyan) 140%);
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
-            filter: drop-shadow(0 0 5px rgba(79, 209, 255, 0.35));
         }
 
-        .status-line {
+        .status {
             display: flex;
             align-items: center;
-            gap: 5px;
-            margin-top: 1px;
-        }
-
-        .status-line span:last-child {
-            font-family: var(--mono);
+            gap: 6px;
+            margin-top: 2px;
+            font-size: 11px;
+            color: var(--dim);
+            white-space: nowrap;
         }
 
         .status-dot {
             width: 6px;
             height: 6px;
             border-radius: 50%;
-            background: #4fffa0;
-            box-shadow: 0 0 8px #4fffa0, 0 0 2px #4fffa0;
-            animation: pulse-dot 2s ease-in-out infinite;
-            position: relative;
+            background: var(--state);
+            box-shadow: 0 0 8px var(--state);
+            transition: background 0.3s, box-shadow 0.3s;
         }
 
-        .status-dot::after {
-            content: '';
-            position: absolute;
-            inset: -4px;
-            border: 1px solid #4fffa0;
-            border-radius: 50%;
-            opacity: 0;
-            animation: radar-ping 2s ease-out infinite;
+        body[data-state="idle"] .status-dot {
+            background: var(--ok);
+            box-shadow: 0 0 8px var(--ok);
         }
 
-        @keyframes radar-ping {
-            0% {
-                opacity: 0.6;
-                transform: scale(0.6);
-            }
-
-            100% {
-                opacity: 0;
-                transform: scale(2.2);
-            }
+        body:not([data-state="idle"]) #status-text {
+            color: var(--state);
         }
 
-        @keyframes pulse-dot {
-
-            0%,
-            100% {
-                opacity: 1;
-            }
-
-            50% {
-                opacity: 0.35;
-            }
-        }
-
-        .status-line span {
-            font-size: 9px;
-            letter-spacing: 1.5px;
-            color: var(--dim);
-            text-transform: uppercase;
-        }
-
-        .header-actions {
+        .top-actions {
+            margin-left: auto;
             display: flex;
+            align-items: center;
             gap: 6px;
         }
 
-        .icon-btn {
-            background: var(--panel);
-            border: 1px solid var(--panel-border);
+        .icon-btn,
+        .pill-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            height: 32px;
+            border-radius: 9px;
+            border: 1px solid transparent;
+            background: transparent;
             color: var(--dim);
-            font-size: 11px;
-            padding: 5px 11px;
-            border-radius: 20px;
+            font-size: 12px;
             cursor: pointer;
-            transition: border-color 0.15s, color 0.15s;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
         }
 
-        .icon-btn:hover {
+        .icon-btn {
+            width: 32px;
+        }
+
+        .pill-btn {
+            padding: 0 11px;
+            border-color: var(--line);
+        }
+
+        .icon-btn:hover,
+        .pill-btn:hover {
+            background: var(--panel-2);
             color: var(--text);
-            border-color: var(--cyan);
+            border-color: var(--line-strong);
         }
 
-        /* ---------- Messages ---------- */
-        #messages {
-            flex: 1 1 auto;
-            overflow-y: auto;
-            padding: 18px 16px;
+        /* (display: inline-flex le ganaría al atributo hidden) */
+        .pill-btn[hidden] {
+            display: none;
+        }
+
+        /* "Callar": solo aparece mientras ALYA está hablando. */
+        .pill-btn.stop-speak {
+            color: var(--state);
+            border-color: color-mix(in srgb, var(--state) 45%, transparent);
+            background: color-mix(in srgb, var(--state) 10%, transparent);
+        }
+
+        .pill-btn.stop-speak:hover {
+            color: var(--text);
+            border-color: color-mix(in srgb, var(--state) 75%, transparent);
+            background: color-mix(in srgb, var(--state) 20%, transparent);
+        }
+
+        /* Voz silenciada: se tiene que notar de un vistazo. */
+        .pill-btn.muted,
+        .pill-btn.muted:hover {
+            color: var(--warn);
+            border-color: rgba(251, 191, 36, 0.45);
+            background: rgba(251, 191, 36, 0.1);
+        }
+
+        .pill-btn.muted:hover {
+            border-color: rgba(251, 191, 36, 0.7);
+            background: rgba(251, 191, 36, 0.17);
+        }
+
+        /* Menú ⋯ */
+        .menu-wrap {
+            position: relative;
+        }
+
+        .menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            width: 216px;
+            padding: 6px;
+            background: var(--panel-2);
+            border: 1px solid var(--line-strong);
+            border-radius: 12px;
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+            z-index: 60;
+        }
+
+        .menu[hidden] {
+            display: none;
+        }
+
+        .menu button {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            border: none;
+            border-radius: 8px;
+            background: transparent;
+            color: var(--text);
+            font-size: 12.5px;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .menu button svg {
+            color: var(--dim);
+        }
+
+        .menu button:hover {
+            background: var(--panel-3);
+        }
+
+        .menu button.danger:hover {
+            color: var(--danger);
+        }
+
+        .menu button.danger:hover svg {
+            color: var(--danger);
+        }
+
+        .menu hr {
+            border: none;
+            border-top: 1px solid var(--line);
+            margin: 5px 4px;
+        }
+
+        /* ---------- Cuerpo: barra lateral + escenario ---------- */
+        .app {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            position: relative;
+            z-index: 1;
+        }
+
+        .sidebar {
+            width: var(--sidebar-w);
+            flex-shrink: 0;
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            background: rgba(8, 12, 20, 0.66);
+            -webkit-backdrop-filter: blur(20px) saturate(1.2);
+            backdrop-filter: blur(20px) saturate(1.2);
+            border-right: 1px solid var(--line);
+            margin-left: calc(var(--sidebar-w) * -1);
+            transition: margin-left 0.22s ease;
+            z-index: 20;
         }
 
-        #messages::-webkit-scrollbar {
-            width: 8px;
+        body.sidebar-open .sidebar {
+            margin-left: 0;
         }
 
-        #messages::-webkit-scrollbar-track {
+        .side-top {
+            padding: 14px 12px 10px;
+        }
+
+        .new-conv {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 9px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--line-strong);
+            background: linear-gradient(135deg, rgba(57, 198, 255, 0.10), rgba(139, 92, 255, 0.10));
+            color: var(--text);
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+
+        .new-conv:hover {
+            border-color: color-mix(in srgb, var(--blue) 55%, transparent);
+            background: linear-gradient(135deg, rgba(57, 198, 255, 0.16), rgba(139, 92, 255, 0.16));
+        }
+
+        .new-conv svg {
+            color: var(--blue);
+        }
+
+        .seg {
+            display: flex;
+            gap: 2px;
+            margin-top: 10px;
+            padding: 3px;
+            border-radius: 9px;
+            background: rgba(4, 7, 12, 0.5);
+            border: 1px solid var(--line);
+        }
+
+        .seg button {
+            flex: 1;
+            padding: 5px 0;
+            border: none;
+            border-radius: 6px;
             background: transparent;
+            color: var(--dim);
+            font-size: 11.5px;
+            cursor: pointer;
         }
 
-        #messages::-webkit-scrollbar-thumb {
-            background: var(--panel-border);
-            border-radius: 4px;
+        .seg button.active {
+            background: var(--panel-3);
+            color: var(--text);
         }
 
-        #messages::-webkit-scrollbar-thumb:hover {
-            background: var(--dim);
+        .conv-list {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 2px 8px 10px;
         }
 
-        /* ---------- Pantalla de bienvenida (chat vacío) ---------- */
+        .conv-group {
+            margin: 12px 6px 5px;
+            font-family: var(--mono);
+            font-size: 9.5px;
+            letter-spacing: 1.4px;
+            text-transform: uppercase;
+            color: var(--dim-2);
+        }
+
+        .conv-item {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 8px 7px 10px;
+            border-radius: 8px;
+            color: #B6C2D6;
+            font-size: 12.5px;
+            cursor: pointer;
+            border: 1px solid transparent;
+        }
+
+        .conv-item:hover {
+            background: var(--panel-2);
+            color: var(--text);
+        }
+
+        .conv-item.active {
+            background: var(--panel-2);
+            color: var(--text);
+            border-color: var(--line-strong);
+        }
+
+        .conv-item.active::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            border-radius: 2px;
+            background: var(--blue);
+        }
+
+        .conv-title {
+            flex: 1;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .conv-actions {
+            display: none;
+            gap: 1px;
+        }
+
+        .conv-item:hover .conv-actions,
+        .conv-item .conv-actions.keep {
+            display: flex;
+        }
+
+        .conv-actions button {
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--dim);
+            cursor: pointer;
+        }
+
+        .conv-actions button svg {
+            width: 13px;
+            height: 13px;
+        }
+
+        .conv-actions button:hover {
+            background: var(--panel-3);
+            color: var(--text);
+        }
+
+        .conv-actions button.on {
+            color: var(--warn);
+        }
+
+        .conv-actions button.on svg {
+            fill: currentColor;
+        }
+
+        .conv-actions button.confirm {
+            width: auto;
+            padding: 0 7px;
+            font-size: 10.5px;
+            color: var(--danger);
+            background: rgba(255, 107, 107, 0.12);
+        }
+
+        .conv-fav-mark {
+            color: var(--warn);
+            display: flex;
+        }
+
+        .conv-fav-mark svg {
+            width: 11px;
+            height: 11px;
+            fill: currentColor;
+        }
+
+        .conv-item:hover .conv-fav-mark {
+            display: none;
+        }
+
+        .conv-empty {
+            margin: 22px 10px;
+            color: var(--dim-2);
+            font-size: 12px;
+            line-height: 1.5;
+            text-align: center;
+        }
+
+        .side-footer {
+            flex-shrink: 0;
+            padding: 8px;
+            border-top: 1px solid var(--line);
+        }
+
+        .side-footer button {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            border: none;
+            border-radius: 8px;
+            background: transparent;
+            color: var(--dim);
+            font-size: 12.5px;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .side-footer button:hover {
+            background: var(--panel-2);
+            color: var(--text);
+        }
+
+        /* En ventanas angostas la barra lateral flota por encima del chat. */
+        .scrim {
+            display: none;
+        }
+
+        @media (max-width: 760px) {
+            .sidebar {
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                left: 0;
+                box-shadow: 18px 0 40px rgba(0, 0, 0, 0.5);
+            }
+
+            body.sidebar-open .scrim {
+                display: block;
+                position: absolute;
+                inset: 0;
+                background: rgba(4, 7, 12, 0.6);
+                z-index: 15;
+            }
+
+            .pill-btn span {
+                display: none;
+            }
+
+            .pill-btn {
+                width: 32px;
+                padding: 0;
+            }
+        }
+
+        /* ---------- Escenario (chat) ---------- */
+        .stage {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        /* Grid ambiental: fino, casi negro, y se desvanece hacia los bordes. */
+        .stage::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background:
+                linear-gradient(rgba(150, 190, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(150, 190, 255, 0.03) 1px, transparent 1px);
+            background-size: 32px 32px;
+            -webkit-mask: radial-gradient(ellipse 75% 70% at 50% 38%, #000 0%, transparent 100%);
+            mask: radial-gradient(ellipse 75% 70% at 50% 38%, #000 0%, transparent 100%);
+            pointer-events: none;
+        }
+
+        #messages {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .thread {
+            max-width: 800px;
+            min-height: 100%;
+            margin: 0 auto;
+            padding: 22px 22px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        /* ---------- Pantalla inicial ---------- */
         .welcome {
             flex: 1;
             display: flex;
@@ -238,73 +811,245 @@
             align-items: center;
             justify-content: center;
             text-align: center;
-            padding: 20px;
-            gap: 14px;
+            padding: 10px 0 18px;
+            position: relative;
         }
 
-        .welcome .avatar-big {
-            width: 64px;
-            height: 64px;
-            border-radius: 50%;
-            background: conic-gradient(from 200deg, var(--pink), var(--cyan), var(--pink));
-            padding: 3px;
-            box-shadow: 0 0 24px rgba(79, 209, 255, 0.35), 0 0 10px rgba(255, 94, 168, 0.25);
+        .welcome-glow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 460px;
+            height: 380px;
+            transform: translate(-50%, -66%);
+            background: radial-gradient(closest-side, color-mix(in srgb, var(--state) 13%, transparent), transparent 72%);
+            pointer-events: none;
+            transition: background 0.5s;
         }
 
-        .welcome .avatar-big img {
-            width: 100%;
-            height: 100%;
-            border-radius: 50%;
-            object-fit: cover;
-            display: block;
+        .welcome .core {
+            margin-bottom: 26px;
+        }
+
+        /* Adorno tipo HUD alrededor del avatar: líneas y nodos muy tenues
+           que toman el color del estado. Es decorativo, no dice nada. */
+        .core-hud {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 440px;
+            height: 160px;
+            transform: translate(-50%, -50%);
+            color: var(--state);
+            opacity: 0.5;
+            pointer-events: none;
+            transition: color 0.4s;
+        }
+
+        .core-hud .hud-line {
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1;
+            opacity: 0.55;
+        }
+
+        .core-hud .hud-node {
+            fill: rgba(7, 11, 18, 0.55);
+            stroke: currentColor;
+            stroke-width: 1;
+            opacity: 0.8;
+        }
+
+        .core-hud .hud-dot {
+            fill: currentColor;
+        }
+
+        .core-hud .hud-text {
+            fill: currentColor;
+            opacity: 0.38;
+        }
+
+        .core-hud .hud-glyph {
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1;
+            opacity: 0.9;
         }
 
         .welcome h2 {
             margin: 0;
-            font-size: 15px;
+            font-size: 22px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            position: relative;
+        }
+
+        .welcome-sub {
+            margin: 6px 0 0;
+            color: var(--dim);
+            font-size: 13px;
+            position: relative;
+        }
+
+        .quick-label {
+            margin: 26px 0 10px;
+            font-family: var(--mono);
+            font-size: 10px;
+            letter-spacing: 1.6px;
+            text-transform: uppercase;
+            color: var(--dim-2);
+            position: relative;
+        }
+
+        .quick-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 208px));
+            gap: 10px;
+            position: relative;
+        }
+
+        .quick-card {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            padding: 11px 13px;
+            border-radius: 12px;
+            --tint: var(--blue);
+            border: 1px solid rgba(190, 215, 255, 0.10);
+            background:
+                linear-gradient(115deg, color-mix(in srgb, var(--tint) 17%, transparent), transparent 62%),
+                rgba(12, 18, 30, 0.52);
+            -webkit-backdrop-filter: blur(14px) saturate(1.3);
+            backdrop-filter: blur(14px) saturate(1.3);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+            text-align: left;
+            cursor: pointer;
+            transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+        }
+
+        .quick-card:nth-child(2) {
+            --tint: var(--magenta);
+        }
+
+        .quick-card:nth-child(3) {
+            --tint: var(--cyan);
+        }
+
+        .quick-card:nth-child(4) {
+            --tint: var(--violet);
+        }
+
+        .quick-card:hover {
+            border-color: color-mix(in srgb, var(--tint) 55%, transparent);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 22px color-mix(in srgb, var(--tint) 14%, transparent);
+            transform: translateY(-1px);
+        }
+
+        .quick-icon {
+            width: 32px;
+            height: 32px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 9px;
+            color: var(--blue);
+            background: rgba(57, 198, 255, 0.09);
+        }
+
+        .quick-card:nth-child(2) .quick-icon {
+            color: var(--magenta);
+            background: rgba(216, 92, 255, 0.09);
+        }
+
+        .quick-card:nth-child(3) .quick-icon {
+            color: var(--cyan);
+            background: rgba(99, 230, 255, 0.08);
+        }
+
+        .quick-card:nth-child(4) .quick-icon {
+            color: var(--violet);
+            background: rgba(139, 92, 255, 0.12);
+        }
+
+        .quick-text {
+            min-width: 0;
+        }
+
+        .quick-text b {
+            display: block;
+            font-size: 12.5px;
             font-weight: 600;
             color: var(--text);
-            letter-spacing: 0.5px;
         }
 
-        .welcome p {
-            margin: 0;
-            font-size: 12px;
+        .quick-text small {
+            display: block;
+            margin-top: 2px;
+            font-size: 11px;
             color: var(--dim);
-            max-width: 260px;
-            line-height: 1.5;
         }
 
-        .suggestions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            justify-content: center;
-            margin-top: 4px;
+        /* Ventana angosta o baja: todo un poco más compacto para que la
+           pantalla inicial entre sin tener que desplazarse. */
+        @media (max-width: 560px), (max-height: 620px) {
+            .core-lg {
+                --size: 100px;
+            }
+
+            .welcome .core {
+                margin-bottom: 20px;
+            }
+
+            .core-hud {
+                display: none;
+            }
+
+            .welcome h2 {
+                font-size: 19px;
+            }
+
+            .quick-label {
+                margin-top: 18px;
+            }
+
+            .quick-grid {
+                width: 100%;
+                max-width: 440px;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+
+            .quick-card {
+                padding: 9px 10px;
+                gap: 9px;
+            }
+
+            .thread {
+                padding: 16px 14px 8px;
+            }
+
+            .composer-wrap {
+                padding: 6px 14px 12px;
+            }
+
+            .msg-row {
+                max-width: 94%;
+            }
         }
 
-        .suggestion-chip {
-            background: var(--panel);
-            border: 1px solid var(--panel-border);
-            color: var(--text);
-            font-size: 12px;
-            padding: 7px 13px;
-            border-radius: 16px;
-            cursor: pointer;
-            transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+        @media (max-width: 380px) {
+            .quick-grid {
+                grid-template-columns: minmax(0, 1fr);
+            }
         }
 
-        .suggestion-chip:hover {
-            border-color: var(--cyan);
-            transform: translateY(-1px);
-            box-shadow: 0 0 10px rgba(79, 209, 255, 0.25);
-        }
-
+        /* ---------- Mensajes ---------- */
         .msg-row {
             display: flex;
-            align-items: flex-end;
-            gap: 8px;
-            max-width: 88%;
+            align-items: flex-start;
+            gap: 10px;
+            max-width: 86%;
         }
 
         .msg-row.user {
@@ -316,71 +1061,99 @@
             align-self: flex-start;
         }
 
-        .avatar {
-            width: 26px;
-            height: 26px;
+        .msg-avatar {
+            width: 28px;
+            height: 28px;
+            margin-top: 2px;
             border-radius: 50%;
             flex-shrink: 0;
-            background: conic-gradient(from 200deg, var(--pink), var(--cyan), var(--pink));
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 2px;
+            padding: 1.5px;
+            background: linear-gradient(140deg, var(--blue), var(--violet));
         }
 
-        .avatar img {
+        .msg-avatar img {
             width: 100%;
             height: 100%;
             border-radius: 50%;
             object-fit: cover;
             display: block;
+            background: var(--panel);
+        }
+
+        .msg-body {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }
 
         .msg {
-            padding: 10px 13px;
-            border-radius: 14px;
-            font-size: 13px;
-            line-height: 1.5;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-
-        .msg-row.user .msg {
-            background: linear-gradient(135deg, #1c4a5c, #24354f);
-            color: var(--text);
-            border-bottom-right-radius: 4px;
-        }
-
-        .msg-row.assistant .msg {
-            background: var(--panel);
-            border: 1px solid var(--panel-border);
-            border-left: 2px solid var(--cyan);
-            color: var(--text);
-            border-bottom-left-radius: 4px;
-        }
-
-        .msg-row.assistant .msg {
             position: relative;
+            padding: 10px 14px;
+            border-radius: 14px;
+            font-size: 13.5px;
+            line-height: 1.55;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        /* Las burbujas son casi opacas a propósito: el fondo se intuye,
+           pero el texto se lee igual que sobre un panel liso. */
+        .msg-row.user .msg {
+            background:
+                linear-gradient(135deg, rgba(57, 198, 255, 0.17), rgba(139, 92, 255, 0.22)),
+                rgba(12, 18, 30, 0.84);
+            border: 1px solid rgba(120, 175, 255, 0.24);
+            border-top-right-radius: 5px;
+        }
+
+        .msg-row.assistant .msg {
+            background: rgba(14, 21, 33, 0.90);
+            border: 1px solid rgba(150, 185, 235, 0.12);
+            border-top-left-radius: 5px;
+        }
+
+        /* Respuesta que todavía se está escribiendo: cursor al final. */
+        .msg.live::after {
+            content: '';
+            display: inline-block;
+            width: 7px;
+            height: 1.05em;
+            margin-left: 3px;
+            vertical-align: -0.18em;
+            border-radius: 2px;
+            background: var(--state);
+            animation: caret-blink 1s steps(2, jump-none) infinite;
+        }
+
+        @keyframes caret-blink {
+            50% {
+                opacity: 0.15;
+            }
         }
 
         .copy-btn {
             position: absolute;
-            top: -8px;
-            right: -8px;
-            width: 22px;
-            height: 22px;
-            border-radius: 50%;
-            background: var(--panel);
-            border: 1px solid var(--panel-border);
+            top: -9px;
+            right: -9px;
+            width: 24px;
+            height: 24px;
+            border-radius: 7px;
+            background: var(--panel-3);
+            border: 1px solid var(--line-strong);
             color: var(--dim);
-            font-size: 11px;
             cursor: pointer;
             display: none;
             align-items: center;
             justify-content: center;
         }
 
-        .msg-row.assistant:hover .copy-btn {
+        .copy-btn svg {
+            width: 12px;
+            height: 12px;
+        }
+
+        .msg-row.assistant .msg:hover .copy-btn {
             display: flex;
         }
 
@@ -391,76 +1164,543 @@
 
         .msg img {
             max-width: 100%;
-            border-radius: 8px;
+            border-radius: 9px;
             margin-top: 8px;
             display: block;
         }
 
-        /* Indicador "pensando" */
-        .thinking-dots {
+        .msg .user-images {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .msg .user-images img {
+            max-width: 150px;
+            max-height: 150px;
+            margin-top: 0;
+            object-fit: cover;
+        }
+
+        .msg .user-images+.user-text {
+            margin-top: 8px;
+        }
+
+        /* Marca de "acá había imágenes adjuntas" al reabrir una conversación */
+        .image-chip {
             display: inline-flex;
-            gap: 4px;
-            padding: 3px 0;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 8px;
+            border-radius: 7px;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--dim);
+            font-size: 11.5px;
+        }
+
+        .image-chip+.user-text {
+            margin-top: 7px;
+        }
+
+        .image-chip svg {
+            width: 13px;
+            height: 13px;
+        }
+
+        .thinking-dots {
+            display: flex;
+            gap: 5px;
+            padding: 5px 2px;
         }
 
         .thinking-dots span {
             width: 6px;
             height: 6px;
             border-radius: 50%;
-            background: var(--cyan);
-            animation: bounce-dot 1.1s ease-in-out infinite;
+            background: var(--violet);
+            animation: dot-bounce 1.2s infinite ease-in-out;
         }
 
         .thinking-dots span:nth-child(2) {
             animation-delay: 0.15s;
-            background: #b78fd6;
         }
 
         .thinking-dots span:nth-child(3) {
             animation-delay: 0.3s;
-            background: var(--pink);
         }
 
-        @keyframes bounce-dot {
+        @keyframes dot-bounce {
 
             0%,
-            60%,
+            80%,
             100% {
                 transform: translateY(0);
-                opacity: 0.5;
+                opacity: 0.35;
             }
 
-            30% {
+            40% {
                 transform: translateY(-4px);
                 opacity: 1;
             }
         }
 
-        /* ---------- Tarjeta de confirmación ---------- */
-        .confirm-card {
-            align-self: flex-start;
-            max-width: 88%;
-            margin-left: 32px;
-            background: var(--danger-bg);
-            border: 1px solid var(--danger-border);
-            border-radius: 12px;
-            padding: 12px 13px;
-            font-size: 13px;
+        /* ---------- Tarjetas inteligentes ---------- */
+        .card {
+            width: min(380px, 100%);
+            padding: 13px 15px 14px;
+            border-radius: 13px;
+            background: linear-gradient(180deg, rgba(16, 24, 36, 0.93), rgba(11, 17, 26, 0.93));
+            border: 1px solid var(--line-strong);
         }
 
-        .confirm-card .confirm-title {
-            color: var(--danger);
-            font-weight: 700;
-            margin-bottom: 4px;
-            font-size: 11px;
+        .card-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 11px;
+            font-family: var(--mono);
+            font-size: 10px;
             letter-spacing: 1.5px;
             text-transform: uppercase;
-            font-family: var(--mono);
+            color: var(--dim);
         }
 
-        .confirm-card .confirm-desc {
+        .card-head svg {
+            width: 14px;
+            height: 14px;
+            color: var(--blue);
+        }
+
+        .card-head .count {
+            margin-left: auto;
+            letter-spacing: 0.5px;
+            color: var(--dim-2);
+        }
+
+        .meter {
+            display: grid;
+            grid-template-columns: 58px 1fr 38px 86px;
+            align-items: center;
+            gap: 10px;
+            padding: 5px 0;
+            font-size: 12.5px;
+        }
+
+        .meter-label {
+            color: #B6C2D6;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .meter-bar {
+            height: 5px;
+            border-radius: 3px;
+            background: rgba(130, 170, 220, 0.10);
+            overflow: hidden;
+        }
+
+        .meter-bar i {
+            display: block;
+            height: 100%;
+            border-radius: 3px;
+            background: linear-gradient(90deg, var(--blue), var(--violet));
+        }
+
+        .meter-value {
+            font-family: var(--mono);
+            font-size: 12px;
+            text-align: right;
+        }
+
+        .level {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            color: var(--dim);
+            white-space: nowrap;
+        }
+
+        /* Separador dentro de la tarjeta de sistema ("Espacio en disco") */
+        .card-sub {
+            margin: 10px 0 3px;
+            padding-top: 9px;
+            border-top: 1px solid var(--line);
+            font-family: var(--mono);
+            font-size: 9.5px;
+            letter-spacing: 1.3px;
+            text-transform: uppercase;
+            color: var(--dim-2);
+        }
+
+        .level::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--ok);
+        }
+
+        .level.high::before {
+            background: var(--warn);
+        }
+
+        .level.critical::before {
+            background: var(--danger);
+        }
+
+        .meter.high .meter-bar i {
+            background: linear-gradient(90deg, var(--violet), var(--warn));
+        }
+
+        .meter.critical .meter-bar i {
+            background: linear-gradient(90deg, var(--warn), var(--danger));
+        }
+
+        .card-note {
+            margin-top: 9px;
+            padding-top: 9px;
+            border-top: 1px solid var(--line);
+            font-size: 11px;
+            color: var(--dim);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .card-line {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .card-badge {
+            width: 38px;
+            height: 38px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 11px;
+            color: var(--blue);
+            background: rgba(57, 198, 255, 0.10);
+        }
+
+        .card-badge svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        .card-badge.song {
+            color: var(--magenta);
+            background: rgba(216, 92, 255, 0.10);
+        }
+
+        .card-badge.fail {
+            color: var(--danger);
+            background: rgba(255, 107, 107, 0.10);
+        }
+
+        .card-main {
+            min-width: 0;
+        }
+
+        .card-main b {
+            display: block;
+            font-size: 13.5px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-transform: capitalize;
+        }
+
+        .card-main.keep-case b {
+            text-transform: none;
+        }
+
+        .card-main small {
+            display: block;
+            margin-top: 2px;
+            font-size: 11.5px;
+            color: var(--dim);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .card-main small.ok {
+            color: var(--ok);
+        }
+
+        .card-main small.fail {
+            color: var(--danger);
+        }
+
+        .file-row {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 7px;
+            margin: 0 -7px;
+            width: calc(100% + 14px);
+            border: none;
+            border-radius: 8px;
+            background: transparent;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .file-row:hover {
+            background: var(--panel-3);
+        }
+
+        .file-row svg {
+            width: 15px;
+            height: 15px;
+            color: var(--dim);
+        }
+
+        .file-row:hover svg {
+            color: var(--cyan);
+        }
+
+        .file-info {
+            min-width: 0;
+        }
+
+        .file-info b {
+            display: block;
+            font-size: 12.5px;
+            font-weight: 500;
             color: var(--text);
-            margin-bottom: 10px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-info small {
+            display: block;
+            font-size: 10.5px;
+            color: var(--dim-2);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            direction: rtl;
+            text-align: left;
+        }
+
+        /* ---------- Tarjeta de guía paso a paso ---------- */
+        .card.guide {
+            width: min(470px, 100%);
+        }
+
+        .guide-title {
+            font-size: 14.5px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .guide-intro {
+            font-size: 12.5px;
+            line-height: 1.55;
+            color: #B6C2D6;
+        }
+
+        .guide-notes {
+            margin: 11px 0 2px;
+            padding: 9px 11px;
+            border-radius: 9px;
+            background: rgba(251, 191, 36, 0.06);
+            border: 1px solid rgba(251, 191, 36, 0.18);
+        }
+
+        .guide-notes div {
+            position: relative;
+            padding-left: 13px;
+            font-size: 11.5px;
+            line-height: 1.5;
+            color: #C9D3E3;
+        }
+
+        .guide-notes div+div {
+            margin-top: 4px;
+        }
+
+        .guide-notes div::before {
+            content: '';
+            position: absolute;
+            left: 1px;
+            top: 7px;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: var(--warn);
+        }
+
+        .guide-step {
+            display: flex;
+            gap: 11px;
+            margin-top: 13px;
+        }
+
+        .guide-num {
+            width: 21px;
+            height: 21px;
+            flex-shrink: 0;
+            margin-top: 1px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--blue), var(--violet));
+            color: #050912;
+            font-family: var(--mono);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .guide-step-body {
+            min-width: 0;
+            flex: 1;
+        }
+
+        .guide-step-body b {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .guide-step-body p {
+            margin: 3px 0 0;
+            font-size: 12.5px;
+            line-height: 1.55;
+            color: #B6C2D6;
+        }
+
+        .guide-copy {
+            display: flex;
+            align-items: stretch;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .guide-copy code {
+            flex: 1;
+            min-width: 0;
+            padding: 6px 9px;
+            border-radius: 7px;
+            background: rgba(4, 7, 12, 0.7);
+            border: 1px solid var(--line-strong);
+            font-family: var(--mono);
+            font-size: 11.5px;
+            color: var(--cyan);
+            overflow-x: auto;
+            white-space: nowrap;
+            user-select: all;
+        }
+
+        .guide-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 11px;
+            border-radius: 8px;
+            border: 1px solid var(--line-strong);
+            background: var(--panel-3);
+            color: var(--text);
+            font-size: 12px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: border-color 0.15s, color 0.15s;
+        }
+
+        .guide-btn svg {
+            width: 13px;
+            height: 13px;
+        }
+
+        .guide-btn:hover {
+            border-color: var(--cyan);
+            color: var(--cyan);
+        }
+
+        .guide-step-body .guide-btn {
+            margin-top: 8px;
+        }
+
+        .guide-problems {
+            margin-top: 14px;
+            padding-top: 11px;
+            border-top: 1px solid var(--line);
+        }
+
+        .guide-problems summary {
+            font-size: 12.5px;
+            color: var(--dim);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .guide-problems summary:hover {
+            color: var(--text);
+        }
+
+        .guide-problem {
+            margin-top: 10px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .guide-problem b {
+            display: block;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .guide-problem span {
+            color: #B6C2D6;
+        }
+
+        .guide-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .guide-actions .guide-btn.primary {
+            background: linear-gradient(135deg, rgba(57, 198, 255, 0.18), rgba(139, 92, 255, 0.2));
+            border-color: rgba(110, 170, 255, 0.35);
+        }
+
+        /* ---------- Confirmación de acciones sensibles ---------- */
+        .confirm-card {
+            align-self: flex-start;
+            margin-left: 38px;
+            width: min(380px, 86%);
+            padding: 13px 15px;
+            border-radius: 13px;
+            background: linear-gradient(rgba(255, 107, 107, 0.07), rgba(255, 107, 107, 0.07)), rgba(14, 21, 33, 0.90);
+            border: 1px solid rgba(255, 107, 107, 0.30);
+        }
+
+        .confirm-title {
+            font-family: var(--mono);
+            font-size: 10px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: var(--danger);
+            margin-bottom: 7px;
+        }
+
+        .confirm-desc {
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 12px;
+            overflow-wrap: anywhere;
         }
 
         .confirm-buttons {
@@ -470,361 +1710,1553 @@
 
         .confirm-buttons button {
             flex: 1;
-            border: none;
-            border-radius: 8px;
-            padding: 7px 0;
-            font-size: 12px;
+            padding: 8px 0;
+            border-radius: 9px;
+            font-size: 12.5px;
             font-weight: 600;
             cursor: pointer;
         }
 
         .confirm-yes {
             background: var(--danger);
-            color: white;
+            border: 1px solid var(--danger);
+            color: #1a0b0b;
         }
 
         .confirm-no {
-            background: var(--panel);
+            background: transparent;
+            border: 1px solid var(--line-strong);
             color: var(--text);
-            border: 1px solid var(--panel-border) !important;
         }
 
-        /* ---------- Input ---------- */
-        #input-bar {
+        .confirm-buttons button:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+
+        /* ---------- Compositor ---------- */
+        .composer-wrap {
             flex-shrink: 0;
+            padding: 6px 22px 16px;
+            position: relative;
+        }
+
+        .composer {
+            max-width: 756px;
+            margin: 0 auto;
+            border-radius: 16px;
+            background: rgba(11, 17, 27, 0.72);
+            -webkit-backdrop-filter: blur(18px) saturate(1.25);
+            backdrop-filter: blur(18px) saturate(1.25);
+            border: 1px solid rgba(150, 185, 235, 0.14);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        /* El brillo solo aparece cuando se está escribiendo. */
+        .composer:focus-within {
+            border-color: color-mix(in srgb, var(--cyan) 55%, transparent);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28), 0 0 0 3px rgba(99, 230, 255, 0.07), 0 0 26px rgba(99, 230, 255, 0.12);
+        }
+
+        #attachments {
+            display: none;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 10px 12px 0;
+        }
+
+        #attachments.has-items {
+            display: flex;
+        }
+
+        .attachment {
+            position: relative;
+            width: 54px;
+            height: 54px;
+            border-radius: 9px;
+            overflow: hidden;
+            border: 1px solid var(--line-strong);
+        }
+
+        .attachment img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .attachment button {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 17px;
+            height: 17px;
+            border-radius: 50%;
+            border: none;
+            background: rgba(7, 11, 18, 0.85);
+            color: var(--text);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+        }
+
+        .attachment button svg {
+            width: 9px;
+            height: 9px;
+            stroke-width: 2.6;
+        }
+
+        .attachment button:hover {
+            background: var(--danger);
+        }
+
+        .composer-row {
             display: flex;
             align-items: flex-end;
-            gap: 8px;
-            padding: 12px 14px 14px;
-            border-top: 1px solid var(--panel-border);
+            gap: 2px;
+            padding: 7px 8px;
         }
 
-        #input {
-            flex: 1;
-            background: var(--panel);
-            border: 1px solid var(--panel-border);
-            color: var(--text);
-            border-radius: 20px;
-            padding: 10px 16px;
-            font-size: 13px;
-            font-family: inherit;
-            resize: none;
-            outline: none;
-            transition: border-color 0.15s;
-            max-height: 120px;
-            overflow-y: auto;
-            line-height: 1.4;
-        }
-
-        #input:focus {
-            border-color: var(--cyan);
-            box-shadow: 0 0 0 1px var(--cyan), 0 0 12px rgba(79, 209, 255, 0.25);
-        }
-
-        #send-btn {
-            width: 38px;
-            height: 38px;
+        .tool-btn {
+            width: 34px;
+            height: 34px;
             flex-shrink: 0;
-            border-radius: 50%;
-            background: linear-gradient(135deg, var(--pink), var(--cyan));
-            color: #0a0e14;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             border: none;
-            font-size: 15px;
-            font-weight: 700;
-            cursor: pointer;
-            box-shadow: 0 0 12px rgba(79, 209, 255, 0.3);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.1s, opacity 0.15s;
-        }
-
-        #send-btn:hover:not(:disabled) {
-            transform: scale(1.06);
-        }
-
-        #send-btn:disabled {
-            opacity: 0.4;
-            cursor: default;
-            transform: none;
-        }
-
-        #mic-btn {
-            width: 38px;
-            height: 38px;
-            flex-shrink: 0;
-            border-radius: 50%;
-            background: var(--panel);
-            border: 1px solid var(--panel-border);
+            border-radius: 10px;
+            background: transparent;
             color: var(--dim);
-            font-size: 15px;
             cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: border-color 0.15s, color 0.15s, background 0.15s;
+            transition: background 0.15s, color 0.15s;
         }
 
-        #mic-btn:hover {
-            border-color: var(--cyan);
-            color: var(--cyan);
+        .tool-btn svg {
+            width: 17px;
+            height: 17px;
+        }
+
+        .tool-btn:hover:not(:disabled) {
+            background: var(--panel-3);
+            color: var(--text);
+        }
+
+        .tool-btn:disabled {
+            opacity: 0.35;
+            cursor: default;
         }
 
         #mic-btn.recording {
             background: var(--danger);
-            border-color: var(--danger);
-            color: white;
-            animation: mic-pulse 1.2s ease-in-out infinite;
-        }
-
-        @keyframes mic-pulse {
-
-            0%,
-            100% {
-                box-shadow: 0 0 0 0 rgba(255, 95, 95, 0.5);
-            }
-
-            50% {
-                box-shadow: 0 0 0 8px rgba(255, 95, 95, 0);
-            }
-        }
-
-        #mic-btn:disabled {
-            opacity: 0.4;
-            cursor: default;
-        }
-
-        #song-btn {
-            width: 38px;
-            height: 38px;
-            flex-shrink: 0;
-            border-radius: 50%;
-            background: var(--panel);
-            border: 1px solid var(--panel-border);
-            color: var(--dim);
-            font-size: 14px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: border-color 0.15s, color 0.15s;
-        }
-
-        #song-btn:hover {
-            border-color: var(--pink);
-            color: var(--pink);
+            color: #fff;
+            animation: rec-pulse 1.2s ease-in-out infinite;
         }
 
         #song-btn.listening {
-            background: var(--pink);
-            border-color: var(--pink);
-            color: white;
-            animation: mic-pulse 1.2s ease-in-out infinite;
+            background: color-mix(in srgb, var(--magenta) 85%, transparent);
+            color: #fff;
+            animation: rec-pulse 1.2s ease-in-out infinite;
         }
 
-        #song-btn:disabled {
-            opacity: 0.4;
+        @keyframes rec-pulse {
+
+            0%,
+            100% {
+                box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.45);
+            }
+
+            50% {
+                box-shadow: 0 0 0 7px rgba(255, 107, 107, 0);
+            }
+        }
+
+        #input {
+            flex: 1;
+            min-width: 0;
+            margin: 0 6px;
+            padding: 8px 2px;
+            background: transparent;
+            border: none;
+            outline: none;
+            resize: none;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 13.5px;
+            line-height: 1.4;
+            max-height: 130px;
+            overflow-y: auto;
+        }
+
+        #input::placeholder {
+            color: var(--dim-2);
+        }
+
+        #send-btn {
+            width: 34px;
+            height: 34px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--blue), var(--violet));
+            color: #050912;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.15s, filter 0.15s;
+        }
+
+        #send-btn svg {
+            width: 17px;
+            height: 17px;
+            stroke-width: 2.2;
+        }
+
+        #send-btn:hover:not(:disabled) {
+            filter: brightness(1.12);
+        }
+
+        #send-btn:active:not(:disabled) {
+            transform: scale(0.94);
+        }
+
+        #send-btn:disabled {
+            opacity: 0.35;
             cursor: default;
+        }
+
+        /* Aviso al arrastrar una imagen sobre la ventana */
+        body.dragging::after {
+            content: 'Suelta la imagen aquí';
+            position: fixed;
+            inset: 10px;
+            z-index: 90;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px dashed var(--cyan);
+            border-radius: 14px;
+            background: rgba(7, 11, 18, 0.88);
+            color: var(--cyan);
+            font-family: var(--mono);
+            font-size: 13px;
+            letter-spacing: 1px;
+            pointer-events: none;
+        }
+
+        /* ---------- Ventanas modales (Atajos, Acerca de) ---------- */
+        .modal {
+            position: fixed;
+            inset: 0;
+            z-index: 80;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(4, 7, 12, 0.66);
+            padding: 20px;
+        }
+
+        .modal[hidden] {
+            display: none;
+        }
+
+        .modal-box {
+            width: min(420px, 100%);
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            padding: 20px 22px 18px;
+            border-radius: 16px;
+            background: var(--panel-2);
+            border: 1px solid var(--line-strong);
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+        }
+
+        .modal-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .shortcut {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 8px 0;
+            border-top: 1px solid var(--line);
+            font-size: 12.5px;
+            color: #B6C2D6;
+        }
+
+        .shortcut kbd {
+            flex-shrink: 0;
+            padding: 3px 8px;
+            border-radius: 6px;
+            background: var(--bg);
+            border: 1px solid var(--line-strong);
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text);
+        }
+
+        .about {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            padding: 8px 0 4px;
+        }
+
+        .about .core {
+            margin: 6px 0 20px;
+        }
+
+        .about b {
+            font-size: 16px;
+            letter-spacing: 4px;
+        }
+
+        .about .version {
+            margin-top: 6px;
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--blue);
+        }
+
+        .about p {
+            margin: 10px 0 0;
+            font-size: 12.5px;
+            line-height: 1.55;
+            color: var(--dim);
+        }
+
+        /* Datos: quién la hizo, motor y estado */
+        .about-info {
+            width: 100%;
+            margin-top: 16px;
+            border-radius: 11px;
+            background: rgba(4, 7, 12, 0.4);
+            border: 1px solid var(--line);
+            text-align: left;
+        }
+
+        .about-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 9px 13px;
+            font-size: 12.5px;
+        }
+
+        .about-row+.about-row {
+            border-top: 1px solid var(--line);
+        }
+
+        .about-row>span:first-child {
+            color: var(--dim);
+            white-space: nowrap;
+        }
+
+        .about-row>span:last-child {
+            text-align: right;
+            color: var(--text);
+        }
+
+        .about-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .about-status::before {
+            content: '';
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--dim-2);
+        }
+
+        .about-status[data-status="connected"]::before {
+            background: var(--ok);
+            box-shadow: 0 0 8px var(--ok);
+        }
+
+        .about-status[data-status="error"]::before,
+        .about-status[data-status="no_key"]::before {
+            background: var(--warn);
+        }
+
+        .about-status[data-status="offline"]::before {
+            background: var(--danger);
+        }
+
+        /* Acciones */
+        .about-actions {
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .about-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 11px;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: var(--panel-3);
+            color: var(--text);
+            font-size: 12px;
+            text-align: left;
+            cursor: pointer;
+            transition: border-color 0.15s, color 0.15s;
+        }
+
+        .about-btn svg {
+            width: 14px;
+            height: 14px;
+            color: var(--blue);
+        }
+
+        .about-btn:hover:not(:disabled) {
+            border-color: color-mix(in srgb, var(--blue) 55%, transparent);
+        }
+
+        .about-btn:disabled {
+            opacity: 0.6;
+            cursor: default;
+        }
+
+        .about-btn.wide {
+            grid-column: 1 / -1;
+        }
+
+        /* Mensaje bajo los botones (resultado de buscar actualizaciones, etc.) */
+        .about-note {
+            min-height: 17px;
+            margin-top: 10px;
+            font-size: 11.5px;
+            line-height: 1.5;
+            color: var(--cyan);
+        }
+
+        .about-links {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 4px 14px;
+            margin-top: 6px;
+            padding-top: 12px;
+            width: 100%;
+            border-top: 1px solid var(--line);
+        }
+
+        .about-links button {
+            border: none;
+            background: none;
+            padding: 0;
+            color: var(--dim);
+            font-size: 11.5px;
+            cursor: pointer;
+        }
+
+        .about-links button:hover {
+            color: var(--cyan);
+            text-decoration: underline;
+        }
+
+        .about-copy {
+            margin-top: 9px;
+            font-size: 10.5px;
+            color: var(--dim-2);
+        }
+
+        /* Subpáginas: novedades, privacidad, licencias */
+        .about-back {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin: -4px 0 12px;
+            padding: 0;
+            border: none;
+            background: none;
+            color: var(--dim);
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .about-back svg {
+            width: 13px;
+            height: 13px;
+        }
+
+        .about-back:hover {
+            color: var(--text);
+        }
+
+        .about-section+.about-section {
+            margin-top: 15px;
+            padding-top: 14px;
+            border-top: 1px solid var(--line);
+        }
+
+        .about-section h4 {
+            display: flex;
+            align-items: baseline;
+            gap: 9px;
+            margin: 0 0 7px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .about-section h4 small {
+            font-family: var(--mono);
+            font-size: 10px;
+            font-weight: 400;
+            color: var(--dim-2);
+        }
+
+        .about-section .tag {
+            padding: 1px 7px;
+            border-radius: 6px;
+            background: rgba(57, 198, 255, 0.10);
+            color: var(--blue);
+            font-family: var(--mono);
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .about-item {
+            position: relative;
+            padding-left: 13px;
+            font-size: 12.5px;
+            line-height: 1.55;
+            color: #B6C2D6;
+        }
+
+        .about-item+.about-item {
+            margin-top: 5px;
+        }
+
+        .about-item::before {
+            content: '';
+            position: absolute;
+            left: 1px;
+            top: 8px;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: var(--violet);
+        }
+
+        .license-row {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 2px 12px;
+            padding: 8px 0;
+            font-size: 12.5px;
+        }
+
+        .license-row+.license-row {
+            border-top: 1px solid var(--line);
+        }
+
+        .license-row small {
+            grid-column: 1 / -1;
+            font-size: 11.5px;
+            color: var(--dim);
+        }
+
+        .license-row .lic {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--blue);
+        }
+
+        .license-row .ver {
+            margin-left: 6px;
+            font-family: var(--mono);
+            font-size: 10.5px;
+            color: var(--dim-2);
+        }
+
+        .about-footnote {
+            margin-top: 12px;
+            font-size: 11.5px;
+            line-height: 1.5;
+            color: var(--dim);
+        }
+
+        .about-sub .about-btn {
+            margin-top: 14px;
+            width: 100%;
         }
     </style>
 </head>
 
-<body>
-    <header>
+<body data-state="idle">
+    <div class="backdrop"></div>
+
+    <!-- ================= Cabecera ================= -->
+    <header class="topbar">
+        <button class="icon-btn" id="sidebar-toggle" title="Mostrar u ocultar el historial"><span data-icon="menu"></span></button>
+
         <div class="brand">
-            <div class="brand-mark"><img class="avatar-img" src="../build/avatar.png" alt="ALYA" /></div>
-            <div class="brand-text">
-                <h1>ALYA</h1>
-                <div class="status-line"><span class="status-dot"></span><span>En línea</span></div>
+            <div class="core">
+                <span class="core-wave"></span><span class="core-wave"></span><span class="core-wave"></span>
+                <span class="core-glow"></span>
+                <span class="core-ring"></span>
+                <img class="core-img avatar-img" src="../build/avatar.png" alt="ALYA" />
+            </div>
+            <div>
+                <div class="wordmark">ALYA</div>
+                <div class="status"><span class="status-dot"></span><span id="status-text">En línea</span></div>
             </div>
         </div>
-        <div class="header-actions">
-            <button class="icon-btn" id="mute-btn">🔊 Voz</button>
-            <button class="icon-btn" id="reset-btn">↻ Nueva</button>
+
+        <div class="top-actions">
+            <button class="pill-btn stop-speak" id="stop-speak-btn" hidden title="Callar a ALYA (Esc)"><span data-icon="stop"></span><span>Callar</span></button>
+            <button class="pill-btn" id="mute-btn" aria-pressed="false" title="Silenciar la voz de ALYA (Ctrl + M)"><span data-icon="volume"></span><span>Voz</span></button>
+            <button class="pill-btn" id="new-btn" title="Empezar una conversación nueva"><span data-icon="plus"></span><span>Nueva</span></button>
+            <button class="icon-btn" id="settings-btn" title="Configuración"><span data-icon="sliders"></span></button>
+            <div class="menu-wrap">
+                <button class="icon-btn" id="more-btn" title="Más opciones"><span data-icon="dots"></span></button>
+                <div class="menu" id="more-menu" hidden>
+                    <button data-menu="new"><span data-icon="plus"></span>Nueva conversación</button>
+                    <button data-menu="history"><span data-icon="clock"></span>Historial</button>
+                    <hr />
+                    <button data-menu="settings"><span data-icon="sliders"></span>Configuración</button>
+                    <button data-menu="status"><span data-icon="activity"></span>Estado del sistema</button>
+                    <button data-menu="shortcuts"><span data-icon="keyboard"></span>Atajos</button>
+                    <button data-menu="about"><span data-icon="info"></span>Acerca de ALYA</button>
+                    <hr />
+                    <button data-menu="quit" class="danger"><span data-icon="power"></span>Salir</button>
+                </div>
+            </div>
         </div>
     </header>
 
-    <div id="messages">
-        <div class="welcome" id="welcome">
-            <div class="avatar-big"><img class="avatar-img" src="../build/avatar.png" alt="ALYA" /></div>
-            <h2>Hola, soy ALYA</h2>
-            <p>Puedo abrir y cerrar apps, revisar tu sistema, buscar archivos, controlar la música, y generar imágenes.
-                Pregúntame algo.</p>
-            <div class="suggestions">
-                <button class="suggestion-chip" data-msg="¿Cómo está mi PC ahora mismo?">¿Cómo está mi PC?</button>
-                <button class="suggestion-chip" data-msg="Genera una imagen de un gato astronauta">Genera una
-                    imagen</button>
-                <button class="suggestion-chip" data-msg="¿Qué puedes hacer?">¿Qué puedes hacer?</button>
+    <div class="app">
+        <!-- ================= Barra lateral ================= -->
+        <aside class="sidebar" id="sidebar">
+            <div class="side-top">
+                <button class="new-conv" id="side-new"><span data-icon="plus"></span>Nueva conversación</button>
+                <div class="seg" id="conv-filter">
+                    <button data-filter="all" class="active">Todas</button>
+                    <button data-filter="fav">Favoritas</button>
+                </div>
             </div>
+
+            <div class="conv-list" id="conv-list"></div>
+
+            <div class="side-footer">
+                <button data-menu="settings"><span data-icon="sliders"></span>Configuración</button>
+                <button data-menu="status"><span data-icon="activity"></span>Estado del sistema</button>
+                <button data-menu="about"><span data-icon="info"></span>Acerca de ALYA</button>
+            </div>
+        </aside>
+        <div class="scrim" id="scrim"></div>
+
+        <!-- ================= Chat ================= -->
+        <main class="stage">
+            <div id="messages">
+                <div class="thread" id="thread"></div>
+            </div>
+
+            <div class="composer-wrap">
+                <div class="composer">
+                    <div id="attachments"></div>
+                    <div class="composer-row">
+                        <button class="tool-btn" id="attach-btn" title="Adjuntar imagen (también puedes pegarla con Ctrl+V o arrastrarla a la ventana)"><span data-icon="plus"></span></button>
+                        <input type="file" id="file-input" accept="image/*" multiple hidden />
+                        <button class="tool-btn" id="mic-btn" title="Hablar (o Ctrl+Shift+1 desde cualquier lugar)"><span data-icon="mic"></span></button>
+                        <button class="tool-btn" id="song-btn" title="¿Qué canción es esta? (Spotify, YouTube, Discord o lo que esté sonando)"><span data-icon="music"></span></button>
+                        <textarea id="input" rows="1" placeholder="Escribe a ALYA..."></textarea>
+                        <button id="send-btn" title="Enviar"><span data-icon="send"></span></button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Pantalla inicial: solo se muestra cuando no hay conversación. -->
+    <template id="welcome-template">
+        <div class="welcome" id="welcome">
+            <div class="welcome-glow"></div>
+            <div class="core core-lg">
+                <svg class="core-hud" viewBox="0 0 440 160" aria-hidden="true">
+                    <!-- izquierda -->
+                    <path class="hud-line" d="M140 58 H118 L104 44 H64" />
+                    <rect class="hud-text" x="14" y="38" width="44" height="2" /><rect class="hud-text" x="26" y="44" width="32" height="2" /><rect class="hud-text" x="20" y="50" width="38" height="2" />
+                    <path class="hud-line" d="M134 82 H96" />
+                    <rect class="hud-node" x="78" y="73" width="18" height="18" rx="4" />
+                    <path class="hud-glyph" d="M82.5 78.5h9v6h-9zM85 87.5h4" />
+                    <rect class="hud-text" x="30" y="78" width="40" height="2" /><rect class="hud-text" x="42" y="84" width="28" height="2" />
+                    <path class="hud-line" d="M142 108 L124 124 H98" />
+                    <circle class="hud-node" cx="89" cy="124" r="9" />
+                    <path class="hud-glyph" d="M83 124h12M89 118c-3.4 3.6-3.4 8.4 0 12M89 118c3.4 3.6 3.4 8.4 0 12" />
+                    <circle class="hud-dot" cx="140" cy="58" r="1.6" /><circle class="hud-dot" cx="134" cy="82" r="1.6" /><circle class="hud-dot" cx="142" cy="108" r="1.6" />
+                    <!-- derecha -->
+                    <path class="hud-line" d="M300 54 H320 L332 40 H352" />
+                    <rect class="hud-node" x="352" y="31" width="18" height="18" rx="4" />
+                    <path class="hud-glyph" d="M356.5 36h9M356.5 40h9M356.5 44h5.5" />
+                    <path class="hud-line" d="M306 80 H342" />
+                    <circle class="hud-node" cx="351" cy="80" r="9" />
+                    <path class="hud-glyph" d="M347 83v-4l4-3.2 4 3.2v4z" />
+                    <rect class="hud-text" x="368" y="76" width="42" height="2" /><rect class="hud-text" x="368" y="82" width="28" height="2" />
+                    <path class="hud-line" d="M298 106 L316 122 H338" />
+                    <rect class="hud-text" x="344" y="112" width="46" height="2" /><rect class="hud-text" x="344" y="118" width="34" height="2" /><rect class="hud-text" x="344" y="124" width="40" height="2" /><rect class="hud-text" x="344" y="130" width="22" height="2" />
+                    <circle class="hud-dot" cx="300" cy="54" r="1.6" /><circle class="hud-dot" cx="306" cy="80" r="1.6" /><circle class="hud-dot" cx="298" cy="106" r="1.6" />
+                </svg>
+                <span class="core-wave"></span><span class="core-wave"></span><span class="core-wave"></span>
+                <span class="core-glow"></span>
+                <span class="core-ring"></span>
+                <img class="core-img avatar-img" src="../build/avatar.png" alt="ALYA" />
+            </div>
+            <h2>Hola, soy ALYA</h2>
+            <p class="welcome-sub">Tu asistente personal para tu escritorio.</p>
+
+            <div class="quick-label">¿Qué quieres hacer?</div>
+            <div class="quick-grid">
+                <button class="quick-card" data-quick="send" data-msg="¿Cómo está mi PC ahora mismo?">
+                    <span class="quick-icon"><span data-icon="monitor"></span></span>
+                    <span class="quick-text"><b>Analizar sistema</b><small>CPU · RAM · GPU</small></span>
+                </button>
+                <button class="quick-card" data-quick="fill" data-msg="Genera una imagen de ">
+                    <span class="quick-icon"><span data-icon="image"></span></span>
+                    <span class="quick-text"><b>Crear imagen</b><small>Genera contenido</small></span>
+                </button>
+                <button class="quick-card" data-quick="fill" data-msg="Busca el archivo ">
+                    <span class="quick-icon"><span data-icon="folder"></span></span>
+                    <span class="quick-text"><b>Buscar archivos</b><small>En tus carpetas</small></span>
+                </button>
+                <button class="quick-card" data-quick="fill" data-msg="Abre ">
+                    <span class="quick-icon"><span data-icon="zap"></span></span>
+                    <span class="quick-text"><b>Controlar PC</b><small>Apps · música · web</small></span>
+                </button>
+            </div>
+        </div>
+    </template>
+
+    <!-- Ventana modal (Atajos, Acerca de) -->
+    <div class="modal" id="modal" hidden>
+        <div class="modal-box">
+            <div class="modal-title">
+                <span id="modal-title"></span>
+                <button class="icon-btn" id="modal-close" title="Cerrar"><span data-icon="x"></span></button>
+            </div>
+            <div id="modal-body"></div>
         </div>
     </div>
 
-    <div id="input-bar">
-        <button id="mic-btn" title="Hablar (o Ctrl+Shift+1 desde cualquier lugar)">🎤</button>
-        <button id="song-btn" title="¿Qué canción es esta? (escucha 8 segundos)">🎵</button>
-        <textarea id="input" rows="1" placeholder="Escríbele a ALYA..."></textarea>
-        <button id="send-btn" title="Enviar">➤</button>
-    </div>
-
     <script>
+        // ============================================================
+        // Iconos (SVG en línea, trazo fino) — así se ven igual en cualquier
+        // PC, sin depender de qué emojis tenga instalados Windows.
+        // ============================================================
+        const ICONS = {
+            menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+            plus: '<path d="M12 5v14M5 12h14"/>',
+            send: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+            mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+            stop: '<rect x="7" y="7" width="10" height="10" rx="2"/>',
+            music: '<path d="M9 18V5l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="15" r="2.5"/>',
+            volume: '<path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
+            volumeOff: '<path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M22 9.5l-5 5M17 9.5l5 5"/>',
+            sliders: '<path d="M4 6h9M18 6h2M4 12h3M12 12h8M4 18h11M20 18h0"/><circle cx="15.5" cy="6" r="2"/><circle cx="9.5" cy="12" r="2"/><circle cx="17.5" cy="18" r="2"/>',
+            dots: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
+            star: '<path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 16.9l-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z"/>',
+            trash: '<path d="M4 7h16M9 7V4h6v3M6.5 7l.9 13h9.2l.9-13"/>',
+            monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+            image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-8 9"/>',
+            folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+            zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+            info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.2"/>',
+            power: '<path d="M12 3v9M6.3 6.8a8 8 0 1 0 11.4 0"/>',
+            keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
+            clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+            activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+            copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
+            check: '<path d="m5 12 5 5 9-10"/>',
+            file: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
+            app: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+            x: '<path d="M6 6l12 12M18 6 6 18"/>',
+            alert: '<path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17v.2"/>',
+            external: '<path d="M14 4h6v6M20 4l-9 9M18 14v5H5V6h5"/>',
+            list: '<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',
+            refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/>',
+            back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+        };
+
+        function iconSvg(name) {
+            return `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+        }
+
+        // Reemplaza cada <span data-icon="..."> por su SVG.
+        function hydrateIcons(root) {
+            root.querySelectorAll('[data-icon]').forEach((node) => {
+                node.outerHTML = iconSvg(node.dataset.icon);
+            });
+        }
+
+        // Atajo para crear elementos con clase y texto (el texto SIEMPRE va
+        // como textContent: nombres de archivos, títulos, etc. nunca se
+        // interpretan como HTML).
+        function el(tag, className, text) {
+            const node = document.createElement(tag);
+            if (className) node.className = className;
+            if (text !== undefined && text !== null) node.textContent = text;
+            return node;
+        }
+
+        hydrateIcons(document);
+
         const messagesEl = document.getElementById('messages');
+        const threadEl = document.getElementById('thread');
         const inputEl = document.getElementById('input');
         const sendBtn = document.getElementById('send-btn');
-        const resetBtn = document.getElementById('reset-btn');
+        const micBtn = document.getElementById('mic-btn');
+        const songBtn = document.getElementById('song-btn');
+        const statusText = document.getElementById('status-text');
+        const welcomeTemplate = document.getElementById('welcome-template');
 
         // La ruta relativa "../build/avatar.png" solo funciona en modo
         // desarrollo — una vez empaquetada la app, main.ts nos da la ruta
-        // real. Empezamos con la relativa (funciona hoy) y la actualizamos
-        // apenas llega la de verdad (no se nota, es instantáneo).
+        // real. Empezamos con la relativa y la actualizamos apenas llega.
         let avatarUrl = '../build/avatar.png';
+
+        function applyAvatar(root) {
+            root.querySelectorAll('.avatar-img').forEach((img) => (img.src = avatarUrl));
+        }
+
         window.alya.getAvatarUrl().then((url) => {
             avatarUrl = url;
-            document.querySelectorAll('.avatar-img').forEach((img) => (img.src = avatarUrl));
+            applyAvatar(document);
         });
+
+        // Lo mismo para el fondo: la ruta real la da main.ts.
+        window.alya
+            .getBackgroundUrl()
+            .then((url) => document.documentElement.style.setProperty('--backdrop-image', `url("${url}")`))
+            .catch(() => { });
+
+        // ============================================================
+        // Estado de ALYA: el avatar, el punto de la cabecera y el texto de
+        // estado reflejan lo que está haciendo de verdad.
+        //   escuchando > procesando > hablando > escribiendo > error > en línea
+        // ============================================================
+        const activity = { recording: false, songListening: false, thinking: 0, speaking: false, writing: 0, errorUntil: 0 };
+        const stopSpeakBtn = document.getElementById('stop-speak-btn');
+
+        function refreshState() {
+            let state = 'idle';
+            let label = 'En línea';
+
+            if (activity.recording || activity.songListening) {
+                state = 'listening';
+                label = 'Escuchando…';
+            } else if (activity.thinking > 0) {
+                state = 'thinking';
+                label = 'Procesando…';
+            } else if (activity.speaking) {
+                state = 'speaking';
+                label = 'Hablando…';
+            } else if (activity.writing > 0) {
+                // La respuesta se está escribiendo y no la está diciendo (voz silenciada).
+                state = 'thinking';
+                label = 'Escribiendo…';
+            } else if (Date.now() < activity.errorUntil) {
+                state = 'error';
+                label = 'Algo falló';
+            }
+
+            document.body.dataset.state = state;
+            statusText.textContent = label;
+            // El botón "Callar" solo tiene sentido mientras está hablando.
+            stopSpeakBtn.hidden = !activity.speaking;
+        }
+
+        // Muestra el estado de error unos segundos y vuelve solo a la normalidad.
+        function flashError() {
+            activity.errorUntil = Date.now() + 4000;
+            refreshState();
+            setTimeout(refreshState, 4100);
+        }
+
+        // Las respuestas que arma main.ts cuando algo se rompe empiezan así.
+        function looksLikeFailure(text) {
+            return /^(Tuve un problema para responder|No pude identificar la canción:)/.test(text || '');
+        }
+
+        window.alya.onSpeaking((speaking) => {
+            activity.speaking = speaking;
+            refreshState();
+            // Mientras habla, (si está activado) se queda atenta a si le hablas encima.
+            if (speaking) startVoiceWatch();
+            else stopVoiceWatch();
+        });
+
+        /**
+         * Calla a ALYA en el momento: corta la frase y descarta lo que le
+         * faltaba decir de esta respuesta. No la deja silenciada (eso es el
+         * botón "Voz"): la próxima respuesta la dice normal.
+         */
+        function interruptSpeech() {
+            if (!activity.speaking) return;
+            activity.speaking = false;
+            refreshState();
+            stopVoiceWatch();
+            window.alya.stopSpeaking().catch(() => { });
+        }
+
+        stopSpeakBtn.addEventListener('click', interruptSpeech);
+
+        // ============================================================
+        // Hilo de mensajes
+        // ============================================================
+        function scrollToEnd() {
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function showWelcome() {
+            threadEl.innerHTML = '';
+            threadEl.appendChild(welcomeTemplate.content.cloneNode(true));
+            hydrateIcons(threadEl);
+            applyAvatar(threadEl);
+            document.body.classList.remove('in-chat');
+        }
 
         function removeWelcome() {
             const welcome = document.getElementById('welcome');
             if (welcome) welcome.remove();
+            // Con conversación en pantalla el fondo se atenúa (ver .backdrop).
+            document.body.classList.add('in-chat');
         }
 
-        function addMessage(role, text, imageUrl) {
-            removeWelcome();
-            const row = document.createElement('div');
-            row.className = `msg-row ${role}`;
+        function makeAvatar() {
+            const avatar = el('div', 'msg-avatar');
+            const img = el('img', 'avatar-img');
+            img.src = avatarUrl;
+            img.alt = 'ALYA';
+            avatar.appendChild(img);
+            return avatar;
+        }
 
-            if (role === 'assistant') {
-                const avatar = document.createElement('div');
-                avatar.className = 'avatar';
-                avatar.innerHTML = `<img class="avatar-img" src="${avatarUrl}" alt="ALYA" />`;
-                row.appendChild(avatar);
-            }
+        // ---------- Tarjetas inteligentes ----------
+        function levelOf(percent) {
+            if (percent >= 90) return { key: 'critical', label: 'Crítico' };
+            if (percent >= 75) return { key: 'high', label: 'Alto' };
+            return { key: '', label: 'Normal' };
+        }
 
-            const bubble = document.createElement('div');
-            bubble.className = 'msg';
-            bubble.textContent = text;
+        // Para discos lo que importa es cuánto ESPACIO queda, no un "nivel de
+        // uso": recién preocupa cuando está casi lleno.
+        function diskLevelOf(percent) {
+            if (percent >= 95) return 'critical';
+            if (percent >= 88) return 'high';
+            return '';
+        }
 
-            if (role === 'assistant' && text) {
-                const copyBtn = document.createElement('button');
-                copyBtn.className = 'copy-btn';
-                copyBtn.title = 'Copiar';
-                copyBtn.textContent = '⧉';
-                copyBtn.addEventListener('click', () => {
-                    navigator.clipboard.writeText(text);
-                    copyBtn.textContent = '✓';
-                    setTimeout(() => (copyBtn.textContent = '⧉'), 1200);
+        function cardHead(iconName, title, count) {
+            const head = el('div', 'card-head');
+            head.innerHTML = iconSvg(iconName);
+            head.appendChild(el('span', '', title));
+            if (count) head.appendChild(el('span', 'count', count));
+            return head;
+        }
+
+        // note (opcional): texto que reemplaza a "Normal / Alto / Crítico"
+        // (ej. "107 GB libres" en los discos).
+        function meterRow(label, percent, note, noteLevel) {
+            const level = note === undefined ? levelOf(percent) : { key: noteLevel || '', label: note };
+            const row = el('div', `meter ${level.key}`.trim());
+            const labelEl = el('span', 'meter-label', label);
+            labelEl.title = label;
+            row.appendChild(labelEl);
+
+            const bar = el('div', 'meter-bar');
+            const fill = document.createElement('i');
+            fill.style.width = `${Math.max(2, percent)}%`;
+            bar.appendChild(fill);
+            row.appendChild(bar);
+
+            row.appendChild(el('span', 'meter-value', `${percent}%`));
+            row.appendChild(el('span', `level ${level.key}`.trim(), level.label));
+            return row;
+        }
+
+        function badgeLine(iconName, badgeClass, title, subtitle, subtitleClass, keepCase) {
+            const line = el('div', 'card-line');
+            const badge = el('div', `card-badge ${badgeClass || ''}`.trim());
+            badge.innerHTML = iconSvg(iconName);
+            line.appendChild(badge);
+
+            const main = el('div', keepCase ? 'card-main keep-case' : 'card-main');
+            main.appendChild(el('b', '', title));
+            if (subtitle) main.appendChild(el('small', subtitleClass || '', subtitle));
+            line.appendChild(main);
+            return line;
+        }
+
+        function renderCard(card) {
+            const box = el('div', 'card');
+
+            if (card.type === 'system') {
+                box.appendChild(cardHead('monitor', 'Estado del sistema'));
+                box.appendChild(meterRow('CPU', card.cpu));
+                box.appendChild(meterRow('RAM', card.ram));
+                (card.gpus || []).forEach((gpu) => {
+                    if (gpu.load !== null && gpu.load !== undefined) box.appendChild(meterRow('GPU', gpu.load));
                 });
-                bubble.appendChild(copyBtn);
+
+                // Los discos van aparte: su porcentaje es ESPACIO ocupado, no
+                // actividad (el "Disco 3%" del Administrador de tareas es otra cosa).
+                if ((card.disks || []).length > 0) {
+                    box.appendChild(el('div', 'card-sub', 'Espacio ocupado en disco'));
+                    card.disks.forEach((disk) => {
+                        const free = disk.freeGB ? `${disk.freeGB} GB libres` : '';
+                        box.appendChild(meterRow(disk.mount, disk.use, free, diskLevelOf(disk.use)));
+                    });
+                }
+
+                const ramText = card.ramUsedGB
+                    ? `RAM ${card.ramUsedGB} de ${card.ramTotalGB} GB`
+                    : card.ramTotalGB
+                        ? `${card.ramTotalGB} GB de RAM`
+                        : '';
+                const details = [card.cpuModel, ramText].filter(Boolean).join(' · ');
+                if (details) {
+                    const note = el('div', 'card-note', details);
+                    note.title = details;
+                    box.appendChild(note);
+                }
+                return box;
             }
 
-            if (imageUrl) {
-                const img = document.createElement('img');
-                img.src = imageUrl;
-                bubble.appendChild(img);
+            if (card.type === 'app') {
+                box.appendChild(
+                    badgeLine(card.ok ? 'app' : 'alert', card.ok ? '' : 'fail', card.name, card.detail, card.ok ? 'ok' : 'fail')
+                );
+                return box;
             }
-            row.appendChild(bubble);
 
-            messagesEl.appendChild(row);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
+            if (card.type === 'files') {
+                const shown = card.files.length;
+                box.appendChild(cardHead('folder', 'Resultados', card.total > shown ? `${shown} de ${card.total}` : `${card.total}`));
+                card.files.forEach((file) => {
+                    const row = el('button', 'file-row');
+                    row.title = `Mostrar en el Explorador: ${file.path}`;
+                    row.innerHTML = iconSvg('file');
+                    const info = el('span', 'file-info');
+                    info.appendChild(el('b', '', file.name));
+                    // La carpeta se muestra recortada por la izquierda (lo útil es el final de la ruta).
+                    const folder = file.path.slice(0, Math.max(0, file.path.length - file.name.length)).replace(/[\\/]$/, '');
+                    info.appendChild(el('small', '', `‎${folder}`));
+                    row.appendChild(info);
+                    row.addEventListener('click', () => window.alya.showInFolder(file.path));
+                    box.appendChild(row);
+                });
+                return box;
+            }
+
+            if (card.type === 'guide') {
+                box.classList.add('guide');
+                box.appendChild(cardHead('list', 'Guía paso a paso', `${card.steps.length} pasos`));
+                box.appendChild(el('div', 'guide-title', card.title));
+                box.appendChild(el('div', 'guide-intro', card.intro));
+
+                if ((card.notes || []).length > 0) {
+                    const notes = el('div', 'guide-notes');
+                    card.notes.forEach((note) => notes.appendChild(el('div', '', note)));
+                    box.appendChild(notes);
+                }
+
+                // Botón que abre una página en el navegador del usuario.
+                const linkButton = (label, url, extraClass) => {
+                    const button = el('button', `guide-btn ${extraClass || ''}`.trim());
+                    button.innerHTML = iconSvg('external');
+                    button.appendChild(el('span', '', label));
+                    button.addEventListener('click', () => window.alya.openLink(url));
+                    return button;
+                };
+
+                card.steps.forEach((step, index) => {
+                    const row = el('div', 'guide-step');
+                    row.appendChild(el('div', 'guide-num', String(index + 1)));
+                    const body = el('div', 'guide-step-body');
+                    body.appendChild(el('b', '', step.title));
+                    body.appendChild(el('p', '', step.text));
+
+                    if (step.copy) {
+                        const copyRow = el('div', 'guide-copy');
+                        copyRow.appendChild(el('code', '', step.copy));
+                        const copyBtn = el('button', 'guide-btn');
+                        copyBtn.innerHTML = `${iconSvg('copy')}<span>Copiar</span>`;
+                        copyBtn.addEventListener('click', () => {
+                            navigator.clipboard.writeText(step.copy);
+                            copyBtn.innerHTML = `${iconSvg('check')}<span>Copiado</span>`;
+                            setTimeout(() => (copyBtn.innerHTML = `${iconSvg('copy')}<span>Copiar</span>`), 1400);
+                        });
+                        copyRow.appendChild(copyBtn);
+                        body.appendChild(copyRow);
+                    }
+                    if (step.link) body.appendChild(linkButton(step.link.label, step.link.url));
+
+                    row.appendChild(body);
+                    box.appendChild(row);
+                });
+
+                if ((card.problems || []).length > 0) {
+                    const details = el('details', 'guide-problems');
+                    details.appendChild(el('summary', '', 'Si algo sale mal'));
+                    card.problems.forEach((item) => {
+                        const problem = el('div', 'guide-problem');
+                        problem.appendChild(el('b', '', item.problem));
+                        problem.appendChild(el('span', '', item.fix));
+                        details.appendChild(problem);
+                    });
+                    details.addEventListener('toggle', scrollToEnd);
+                    box.appendChild(details);
+                }
+
+                if ((card.actions || []).length > 0) {
+                    const actions = el('div', 'guide-actions');
+                    card.actions.forEach((action) => {
+                        if (action.action === 'link' && action.url) {
+                            actions.appendChild(linkButton(action.label, action.url, 'primary'));
+                        } else if (action.action === 'settings') {
+                            const button = el('button', 'guide-btn');
+                            button.innerHTML = iconSvg('sliders');
+                            button.appendChild(el('span', '', action.label));
+                            button.addEventListener('click', () => window.alya.openSettings());
+                            actions.appendChild(button);
+                        }
+                    });
+                    box.appendChild(actions);
+                }
+                return box;
+            }
+
+            if (card.type === 'song') {
+                const subtitle = [card.artist, card.album].filter(Boolean).join(' · ');
+                box.appendChild(cardHead('music', card.label || 'Sonando ahora', card.source || ''));
+                box.appendChild(badgeLine('music', 'song', card.title, subtitle, '', true));
+                return box;
+            }
+
+            return null;
+        }
+
+        /**
+         * Agrega un mensaje al hilo.
+         * extra: { imageUrl, userImages (miniaturas recién adjuntadas),
+         *          imageCount (al reabrir: solo se sabe cuántas había), cards }
+         */
+        function addMessage(role, text, extra) {
+            const options = extra || {};
+            removeWelcome();
+
+            const row = el('div', `msg-row ${role}`);
+            if (role === 'assistant') row.appendChild(makeAvatar());
+
+            const body = el('div', 'msg-body');
+            const hasImages = options.userImages && options.userImages.length > 0;
+
+            if (text || options.imageUrl || hasImages || options.imageCount) {
+                const bubble = el('div', 'msg');
+
+                if (hasImages) {
+                    const gallery = el('div', 'user-images');
+                    options.userImages.forEach((url) => {
+                        const img = document.createElement('img');
+                        img.src = url;
+                        gallery.appendChild(img);
+                    });
+                    bubble.appendChild(gallery);
+                    if (text) bubble.appendChild(el('div', 'user-text', text));
+                } else if (options.imageCount) {
+                    const chip = el('div', 'image-chip');
+                    chip.innerHTML = iconSvg('image');
+                    chip.appendChild(el('span', '', options.imageCount === 1 ? '1 imagen' : `${options.imageCount} imágenes`));
+                    bubble.appendChild(chip);
+                    if (text) bubble.appendChild(el('div', 'user-text', text));
+                } else {
+                    bubble.textContent = text;
+                }
+
+                if (role === 'assistant' && text) {
+                    const copyBtn = el('button', 'copy-btn');
+                    copyBtn.title = 'Copiar';
+                    copyBtn.innerHTML = iconSvg('copy');
+                    copyBtn.addEventListener('click', () => {
+                        navigator.clipboard.writeText(text);
+                        copyBtn.innerHTML = iconSvg('check');
+                        setTimeout(() => (copyBtn.innerHTML = iconSvg('copy')), 1200);
+                    });
+                    bubble.appendChild(copyBtn);
+                }
+
+                if (options.imageUrl) {
+                    const img = document.createElement('img');
+                    img.src = options.imageUrl;
+                    img.addEventListener('load', scrollToEnd);
+                    bubble.appendChild(img);
+                }
+
+                body.appendChild(bubble);
+            }
+
+            (options.cards || []).forEach((card) => {
+                const node = renderCard(card);
+                if (node) body.appendChild(node);
+            });
+
+            row.appendChild(body);
+            threadEl.appendChild(row);
+            scrollToEnd();
             return row;
         }
 
-        function addThinking() {
+        // Muestra una respuesta de ALYA tal como llega de main.ts.
+        function addReply(reply) {
+            addMessage('assistant', reply.text, { imageUrl: reply.imageUrl, cards: reply.cards });
+            if (reply.pendingConfirmation) addConfirmCard(reply.pendingConfirmation);
+            if (looksLikeFailure(reply.text)) flashError();
+        }
+
+        /**
+         * Pone los puntitos de "pensando" y marca a ALYA como procesando.
+         * Devuelve la función que hay que llamar cuando llega la respuesta.
+         */
+        function startThinking() {
             removeWelcome();
-            const row = document.createElement('div');
-            row.className = 'msg-row assistant';
-            row.innerHTML = `
-        <div class="avatar"><img class="avatar-img" src="${avatarUrl}" alt="ALYA" /></div>
-        <div class="msg"><div class="thinking-dots"><span></span><span></span><span></span></div></div>
-      `;
-            messagesEl.appendChild(row);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-            return row;
+            const row = el('div', 'msg-row assistant');
+            row.appendChild(makeAvatar());
+            const body = el('div', 'msg-body');
+            const bubble = el('div', 'msg');
+            bubble.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
+            body.appendChild(bubble);
+            row.appendChild(body);
+            threadEl.appendChild(row);
+            scrollToEnd();
+
+            activity.thinking++;
+            refreshState();
+
+            let done = false;
+            const stop = () => {
+                if (done) return;
+                done = true;
+                row.remove();
+                activity.thinking = Math.max(0, activity.thinking - 1);
+                refreshState();
+            };
+            stop.row = row; // por si hay que insertar algo ANTES de los puntitos
+            return stop;
+        }
+
+        // ============================================================
+        // Respuesta en vivo: la burbuja se va llenando mientras ALYA escribe
+        // ============================================================
+        const liveReplies = new Map();
+        let liveCounter = 0;
+
+        window.alya.onChatStream((update) => {
+            const live = update && liveReplies.get(update.id);
+            if (live) live.update(update);
+        });
+
+        /**
+         * Empieza una respuesta que va a ir llegando de a poco. Muestra los
+         * puntitos de "pensando" hasta que llega el primer texto, y desde ahí
+         * una burbuja que se va completando. Cuando la respuesta termina hay
+         * que llamar a finish(): la burbuja provisoria se quita y en su lugar
+         * va la definitiva (con sus tarjetas, botón de copiar, etc.). finish()
+         * devuelve una función para llamar después de agregar la definitiva:
+         * si estabas leyendo más arriba, te deja donde estabas.
+         *
+         * onTranscript: en un mensaje de voz, lo que ALYA entendió llega antes
+         * que la respuesta; se le pasa para mostrarlo como mensaje tuyo.
+         */
+        function startLiveReply(onTranscript) {
+            const id = `r${Date.now().toString(36)}-${++liveCounter}`;
+            const stopThinking = startThinking();
+            let row = null;
+            let bubble = null;
+            let finished = false;
+
+            const isNearEnd = () => messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 120;
+
+            const live = {
+                id,
+                transcriptShown: false,
+                update({ text, transcript }) {
+                    if (finished) return;
+
+                    if (transcript && onTranscript && !live.transcriptShown) {
+                        live.transcriptShown = true;
+                        onTranscript(transcript);
+                        // Tu mensaje va antes de lo que ALYA está por responder.
+                        const pending = row || stopThinking.row;
+                        if (pending && pending.isConnected) threadEl.appendChild(pending);
+                        scrollToEnd();
+                    }
+
+                    if (typeof text !== 'string' || !text) return;
+
+                    // Si estabas leyendo más arriba, no te arrastra al final.
+                    const nearEnd = isNearEnd();
+
+                    if (!row) {
+                        stopThinking();
+                        row = el('div', 'msg-row assistant');
+                        row.appendChild(makeAvatar());
+                        const body = el('div', 'msg-body');
+                        bubble = el('div', 'msg live');
+                        body.appendChild(bubble);
+                        row.appendChild(body);
+                        threadEl.appendChild(row);
+                        activity.writing++;
+                        refreshState();
+                    }
+
+                    bubble.textContent = text;
+                    if (nearEnd) scrollToEnd();
+                },
+                finish() {
+                    if (finished) return () => { };
+                    finished = true;
+                    liveReplies.delete(id);
+                    stopThinking();
+
+                    const stayAt = row && !isNearEnd() ? messagesEl.scrollTop : null;
+                    if (row) {
+                        row.remove();
+                        activity.writing = Math.max(0, activity.writing - 1);
+                        refreshState();
+                    }
+                    return () => {
+                        if (stayAt !== null) messagesEl.scrollTop = stayAt;
+                    };
+                },
+            };
+
+            liveReplies.set(id, live);
+            return live;
         }
 
         function addConfirmCard(pending) {
-            const card = document.createElement('div');
-            card.className = 'confirm-card hud-corners';
+            const card = el('div', 'confirm-card');
+            card.appendChild(el('div', 'confirm-title', 'Confirmación necesaria'));
+            card.appendChild(el('div', 'confirm-desc', pending.description));
 
-            const title = document.createElement('div');
-            title.className = 'confirm-title';
-            title.textContent = '⚠ Confirmación necesaria';
-            card.appendChild(title);
+            const buttonsRow = el('div', 'confirm-buttons');
+            const yesBtn = el('button', 'confirm-yes', 'Sí, hazlo');
+            const noBtn = el('button', 'confirm-no', 'No, cancelar');
 
-            const desc = document.createElement('div');
-            desc.className = 'confirm-desc';
-            desc.textContent = pending.description;
-            card.appendChild(desc);
-
-            const buttonsRow = document.createElement('div');
-            buttonsRow.className = 'confirm-buttons';
-
-            const yesBtn = document.createElement('button');
-            yesBtn.className = 'confirm-yes';
-            yesBtn.textContent = 'Sí, hazlo';
-
-            const noBtn = document.createElement('button');
-            noBtn.className = 'confirm-no';
-            noBtn.textContent = 'No, cancelar';
-
-            const disableButtons = () => {
+            const answer = async (action) => {
                 yesBtn.disabled = true;
                 noBtn.disabled = true;
+                const reply = await action();
+                card.remove();
+                addReply(reply);
+                refreshConversations();
             };
 
-            yesBtn.addEventListener('click', async () => {
-                disableButtons();
-                const reply = await window.alya.confirmAction();
-                card.remove();
-                addMessage('assistant', reply.text);
-            });
-
-            noBtn.addEventListener('click', async () => {
-                disableButtons();
-                const reply = await window.alya.cancelAction();
-                card.remove();
-                addMessage('assistant', reply.text);
-            });
+            yesBtn.addEventListener('click', () => answer(() => window.alya.confirmAction()));
+            noBtn.addEventListener('click', () => answer(() => window.alya.cancelAction()));
 
             buttonsRow.appendChild(yesBtn);
             buttonsRow.appendChild(noBtn);
             card.appendChild(buttonsRow);
 
-            messagesEl.appendChild(card);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
+            threadEl.appendChild(card);
+            scrollToEnd();
         }
 
+        // ============================================================
+        // Imágenes adjuntas
+        // ============================================================
+        const attachBtn = document.getElementById('attach-btn');
+        const fileInput = document.getElementById('file-input');
+        const attachmentsEl = document.getElementById('attachments');
+        const MAX_IMAGES = 4; // mismo tope que valida main.ts
+        const MAX_IMAGE_SIDE = 1568; // px del lado más largo — más grande no ayuda y solo pesa
+
+        // Cada elemento: { mimeType, data (base64 sin prefijo), previewUrl }
+        let pendingImages = [];
+
+        /**
+         * Convierte cualquier imagen que Chromium sepa abrir (png, jpg, webp,
+         * gif, bmp...) a un JPEG de tamaño razonable. Así se manda siempre
+         * un formato que Gemini acepta, y una captura 4K no viaja entera.
+         */
+        function fileToChatImage(file) {
+            return new Promise((resolve, reject) => {
+                const objectUrl = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = () => {
+                    URL.revokeObjectURL(objectUrl);
+                    const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+                    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+                    const ctx = canvas.getContext('2d');
+                    // Fondo blanco: JPEG no tiene transparencia (sin esto, un PNG
+                    // transparente quedaría con fondo negro).
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+                    resolve({ mimeType: 'image/jpeg', data: dataUrl.split(',')[1], previewUrl: dataUrl });
+                };
+                img.onerror = () => {
+                    URL.revokeObjectURL(objectUrl);
+                    reject(new Error('No pude abrir esa imagen.'));
+                };
+                img.src = objectUrl;
+            });
+        }
+
+        function renderAttachments() {
+            attachmentsEl.innerHTML = '';
+            pendingImages.forEach((image, index) => {
+                const item = el('div', 'attachment');
+
+                const thumb = document.createElement('img');
+                thumb.src = image.previewUrl;
+                item.appendChild(thumb);
+
+                const removeBtn = document.createElement('button');
+                removeBtn.title = 'Quitar';
+                removeBtn.innerHTML = iconSvg('x');
+                removeBtn.addEventListener('click', () => {
+                    pendingImages.splice(index, 1);
+                    renderAttachments();
+                });
+                item.appendChild(removeBtn);
+
+                attachmentsEl.appendChild(item);
+            });
+            attachmentsEl.classList.toggle('has-items', pendingImages.length > 0);
+        }
+
+        async function addImageFiles(fileList) {
+            const files = Array.from(fileList).filter((file) => file.type.startsWith('image/'));
+            if (files.length === 0) return;
+
+            for (const file of files) {
+                if (pendingImages.length >= MAX_IMAGES) {
+                    addMessage('assistant', `Puedo recibir hasta ${MAX_IMAGES} imágenes por mensaje.`);
+                    break;
+                }
+                try {
+                    pendingImages.push(await fileToChatImage(file));
+                } catch (err) {
+                    addMessage('assistant', err.message);
+                }
+            }
+
+            renderAttachments();
+            inputEl.focus();
+        }
+
+        // Saca las imágenes pendientes (para mandarlas) y limpia la fila.
+        function takePendingImages() {
+            const images = pendingImages;
+            pendingImages = [];
+            renderAttachments();
+            return images;
+        }
+
+        // Lo que viaja a main.ts: sin la miniatura, solo lo que necesita Gemini.
+        function toPayload(images) {
+            return images.map(({ mimeType, data }) => ({ mimeType, data }));
+        }
+
+        // 1) Botón ＋
+        attachBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', () => {
+            addImageFiles(fileInput.files);
+            fileInput.value = ''; // permite volver a elegir el mismo archivo
+        });
+
+        // 2) Pegar con Ctrl+V (ej. un recorte de Win+Shift+S)
+        document.addEventListener('paste', (e) => {
+            const files = Array.from(e.clipboardData?.files ?? []).filter((file) => file.type.startsWith('image/'));
+            if (files.length === 0) return; // texto normal: se pega como siempre
+            e.preventDefault();
+            addImageFiles(files);
+        });
+
+        // 3) Arrastrar y soltar sobre la ventana. Hay que cancelar SIEMPRE
+        // dragover/drop: si no, Electron abre el archivo en vez del chat.
+        let dragDepth = 0;
+        window.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            dragDepth++;
+            document.body.classList.add('dragging');
+        });
+        window.addEventListener('dragover', (e) => e.preventDefault());
+        window.addEventListener('dragleave', () => {
+            dragDepth = Math.max(0, dragDepth - 1);
+            if (dragDepth === 0) document.body.classList.remove('dragging');
+        });
+        window.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dragDepth = 0;
+            document.body.classList.remove('dragging');
+            if (e.dataTransfer?.files?.length) addImageFiles(e.dataTransfer.files);
+        });
+
+        // ============================================================
+        // Enviar un mensaje
+        // ============================================================
         async function send() {
             const text = inputEl.value.trim();
-            if (!text) return;
+            if (!text && pendingImages.length === 0) return;
 
-            addMessage('user', text);
+            const images = takePendingImages();
+            addMessage('user', text, { userImages: images.map((image) => image.previewUrl) });
             inputEl.value = '';
             inputEl.style.height = 'auto';
             sendBtn.disabled = true;
 
-            const thinkingRow = addThinking();
+            // (Si ALYA todavía estaba diciendo la respuesta anterior, main.ts la
+            // calla al recibir este mensaje.)
+            const live = startLiveReply();
 
             try {
-                const reply = await window.alya.sendChatMessage(text);
-                thinkingRow.remove();
-                addMessage('assistant', reply.text, reply.imageUrl);
-                if (reply.pendingConfirmation) {
-                    addConfirmCard(reply.pendingConfirmation);
-                }
+                const reply = await window.alya.sendChatMessage(text, toPayload(images), live.id);
+                const keepScroll = live.finish();
+                addReply(reply);
+                keepScroll();
             } catch (err) {
-                thinkingRow.remove();
+                live.finish();
                 addMessage('assistant', 'Algo falló al conectar con ALYA: ' + err.message);
+                flashError();
             }
 
             sendBtn.disabled = false;
             inputEl.focus();
+            refreshConversations();
         }
 
         sendBtn.addEventListener('click', send);
         inputEl.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                send();
+                if (!sendBtn.disabled) send();
             }
         });
 
@@ -834,28 +3266,648 @@
             inputEl.style.height = inputEl.scrollHeight + 'px';
         });
 
-        // Sugerencias de la pantalla de bienvenida
-        document.querySelectorAll('.suggestion-chip').forEach((chip) => {
-            chip.addEventListener('click', () => {
-                inputEl.value = chip.dataset.msg;
-                send();
+        // Acciones rápidas de la pantalla inicial. "send" manda el mensaje
+        // de una; "fill" deja el comienzo escrito para que lo completes.
+        threadEl.addEventListener('click', (e) => {
+            const card = e.target.closest('.quick-card');
+            if (!card) return;
+            inputEl.value = card.dataset.msg;
+            if (card.dataset.quick === 'send') {
+                if (!sendBtn.disabled) send();
+            } else {
+                inputEl.focus();
+                inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+            }
+        });
+
+        // ============================================================
+        // Historial (barra lateral)
+        // ============================================================
+        const convListEl = document.getElementById('conv-list');
+        const convFilterEl = document.getElementById('conv-filter');
+        let conversations = [];
+        let currentConversationId = null;
+        let convFilter = 'all';
+
+        function groupLabel(timestamp) {
+            const startOfToday = new Date();
+            startOfToday.setHours(0, 0, 0, 0);
+            const days = Math.floor((startOfToday.getTime() - timestamp) / 86400000) + 1;
+            if (timestamp >= startOfToday.getTime()) return 'Hoy';
+            if (days === 1) return 'Ayer';
+            if (days <= 7) return 'Esta semana';
+            return 'Anteriores';
+        }
+
+        function renderConversations() {
+            convListEl.innerHTML = '';
+            const visible = conversations.filter((c) => convFilter === 'all' || c.favorite);
+
+            if (visible.length === 0) {
+                convListEl.appendChild(
+                    el(
+                        'div',
+                        'conv-empty',
+                        convFilter === 'fav'
+                            ? 'Todavía no marcaste ninguna conversación como favorita.'
+                            : 'Tus conversaciones van a aparecer acá.'
+                    )
+                );
+                return;
+            }
+
+            let lastGroup = null;
+            visible.forEach((conversation) => {
+                const group = groupLabel(conversation.updatedAt);
+                if (group !== lastGroup) {
+                    convListEl.appendChild(el('div', 'conv-group', group));
+                    lastGroup = group;
+                }
+
+                const item = el('div', 'conv-item');
+                if (conversation.id === currentConversationId) item.classList.add('active');
+
+                const title = el('span', 'conv-title', conversation.title);
+                title.title = conversation.title;
+                item.appendChild(title);
+
+                if (conversation.favorite) {
+                    const mark = el('span', 'conv-fav-mark');
+                    mark.innerHTML = iconSvg('star');
+                    item.appendChild(mark);
+                }
+
+                const actions = el('div', 'conv-actions');
+
+                const favBtn = document.createElement('button');
+                favBtn.title = conversation.favorite ? 'Quitar de favoritas' : 'Marcar como favorita';
+                favBtn.innerHTML = iconSvg('star');
+                if (conversation.favorite) favBtn.classList.add('on');
+                favBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    await window.alya.setFavorite(conversation.id, !conversation.favorite);
+                    refreshConversations();
+                });
+                actions.appendChild(favBtn);
+
+                // Borrar pide un segundo click para confirmar.
+                const deleteBtn = document.createElement('button');
+                deleteBtn.title = 'Borrar conversación';
+                deleteBtn.innerHTML = iconSvg('trash');
+                deleteBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    if (!deleteBtn.classList.contains('confirm')) {
+                        deleteBtn.classList.add('confirm');
+                        deleteBtn.textContent = '¿Borrar?';
+                        actions.classList.add('keep');
+                        setTimeout(() => {
+                            if (!deleteBtn.isConnected) return;
+                            deleteBtn.classList.remove('confirm');
+                            deleteBtn.innerHTML = iconSvg('trash');
+                            actions.classList.remove('keep');
+                        }, 3000);
+                        return;
+                    }
+                    const wasCurrent = conversation.id === currentConversationId;
+                    await window.alya.deleteConversation(conversation.id);
+                    if (wasCurrent) {
+                        takePendingImages();
+                        showWelcome();
+                    }
+                    refreshConversations();
+                });
+                actions.appendChild(deleteBtn);
+
+                item.appendChild(actions);
+                item.addEventListener('click', () => openConversation(conversation.id));
+                convListEl.appendChild(item);
             });
-        });
+        }
 
-        resetBtn.addEventListener('click', async () => {
+        async function refreshConversations() {
+            try {
+                const result = await window.alya.listConversations();
+                conversations = result.conversations;
+                currentConversationId = result.currentId;
+            } catch (err) {
+                conversations = [];
+            }
+            renderConversations();
+        }
+
+        async function openConversation(id) {
+            if (activity.thinking > 0 || activity.recording) return; // no cambiar de conversación a mitad de una respuesta
+            if (id === currentConversationId) return closeSidebarIfFloating();
+
+            const conversation = await window.alya.openConversation(id);
+            if (!conversation) return refreshConversations();
+
+            takePendingImages();
+            threadEl.innerHTML = '';
+            conversation.messages.forEach((message) => {
+                addMessage(message.role, message.text, {
+                    imageUrl: message.imageUrl,
+                    imageCount: message.imageCount,
+                    cards: message.cards,
+                });
+            });
+            if (conversation.messages.length === 0) showWelcome();
+
+            currentConversationId = conversation.id;
+            renderConversations();
+            closeSidebarIfFloating();
+            inputEl.focus();
+        }
+
+        async function newConversation() {
+            if (activity.thinking > 0 || activity.recording) return;
             await window.alya.resetChat();
-            messagesEl.innerHTML = '';
-            addMessage('assistant', 'Conversación reiniciada. ¿En qué te ayudo?');
+            takePendingImages();
+            showWelcome();
+            currentConversationId = null;
+            renderConversations();
+            closeSidebarIfFloating();
+            inputEl.focus();
+        }
+
+        convFilterEl.addEventListener('click', (e) => {
+            const button = e.target.closest('button[data-filter]');
+            if (!button) return;
+            convFilter = button.dataset.filter;
+            convFilterEl.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === button));
+            renderConversations();
         });
 
+        // ---------- Abrir / plegar la barra lateral ----------
+        const FLOATING_SIDEBAR_WIDTH = 760; // por debajo de esto, la barra flota sobre el chat
+
+        function isSidebarFloating() {
+            return window.innerWidth <= FLOATING_SIDEBAR_WIDTH;
+        }
+
+        function setSidebar(open, remember) {
+            document.body.classList.toggle('sidebar-open', open);
+            if (remember && !isSidebarFloating()) {
+                try {
+                    localStorage.setItem('alya.sidebar', open ? 'open' : 'closed');
+                } catch (err) {
+                    /* sin almacenamiento disponible: simplemente no se recuerda */
+                }
+            }
+        }
+
+        function closeSidebarIfFloating() {
+            if (isSidebarFloating()) setSidebar(false, false);
+        }
+
+        function initialSidebarState() {
+            if (isSidebarFloating()) return false;
+            try {
+                return localStorage.getItem('alya.sidebar') !== 'closed';
+            } catch (err) {
+                return true;
+            }
+        }
+
+        document.getElementById('sidebar-toggle').addEventListener('click', () => {
+            setSidebar(!document.body.classList.contains('sidebar-open'), true);
+        });
+        document.getElementById('scrim').addEventListener('click', () => setSidebar(false, false));
+        document.getElementById('side-new').addEventListener('click', newConversation);
+        document.getElementById('new-btn').addEventListener('click', newConversation);
+
+        // ============================================================
+        // Menú ⋯, modales y botones de la cabecera
+        // ============================================================
+        const moreMenu = document.getElementById('more-menu');
+        const moreBtn = document.getElementById('more-btn');
+        const modalEl = document.getElementById('modal');
+        const modalTitleEl = document.getElementById('modal-title');
+        const modalBodyEl = document.getElementById('modal-body');
+
+        function openModal(title, bodyNode) {
+            modalTitleEl.textContent = title;
+            modalBodyEl.innerHTML = '';
+            modalBodyEl.appendChild(bodyNode);
+            modalEl.hidden = false;
+        }
+
+        function closeModal() {
+            modalEl.hidden = true;
+        }
+
+        document.getElementById('modal-close').addEventListener('click', closeModal);
+        modalEl.addEventListener('click', (e) => {
+            if (e.target === modalEl) closeModal();
+        });
+
+        async function showShortcuts() {
+            const info = await window.alya.getAppInfo().catch(() => ({ voiceShortcut: 'Ctrl + Shift + 1' }));
+            const list = el('div');
+            [
+                ['Hablar con ALYA desde cualquier lugar', info.voiceShortcut],
+                ['Enviar el mensaje', 'Enter'],
+                ['Salto de línea', 'Shift + Enter'],
+                ['Pegar una imagen o un recorte', 'Ctrl + V'],
+                ['Callar a ALYA mientras habla', 'Esc'],
+                ['Silenciar o reactivar la voz', 'Ctrl + M'],
+            ].forEach(([label, keys]) => {
+                const row = el('div', 'shortcut');
+                row.appendChild(el('span', '', label));
+                row.appendChild(el('kbd', '', keys));
+                list.appendChild(row);
+            });
+            openModal('Atajos', list);
+        }
+
+        // ---------- Acerca de ALYA ----------
+        // El contenido (quién la hizo, novedades, privacidad, licencias) viene
+        // de main.ts (aboutInfo.ts); acá solo se dibuja. La ventana principal
+        // es corta, y lo largo va en subpáginas dentro del mismo cuadro.
+        let aboutData = null;
+
+        function aboutButton(iconName, label, onClick, wide) {
+            const button = el('button', wide ? 'about-btn wide' : 'about-btn');
+            button.innerHTML = iconSvg(iconName);
+            button.appendChild(el('span', '', label));
+            button.addEventListener('click', () => onClick(button));
+            return button;
+        }
+
+        // Subpágina con botón para volver a la principal.
+        function openAboutSub(title, contentNode) {
+            const wrap = el('div', 'about-sub');
+            const back = el('button', 'about-back');
+            back.innerHTML = iconSvg('back');
+            back.appendChild(el('span', '', 'Volver'));
+            back.addEventListener('click', showAbout);
+            wrap.appendChild(back);
+            wrap.appendChild(contentNode);
+            openModal(title, wrap);
+            document.querySelector('.modal-box').scrollTop = 0;
+        }
+
+        function sectionList(sections) {
+            const box = el('div');
+            sections.forEach((section) => {
+                const block = el('div', 'about-section');
+                block.appendChild(el('h4', '', section.title));
+                section.items.forEach((item) => block.appendChild(el('div', 'about-item', item)));
+                box.appendChild(block);
+            });
+            return box;
+        }
+
+        function showChangelog(data) {
+            const box = el('div');
+            data.changelog.forEach((entry) => {
+                const block = el('div', 'about-section');
+                const heading = el('h4');
+                heading.appendChild(el('span', 'tag', `v${entry.version}`));
+                heading.appendChild(el('small', '', entry.date));
+                block.appendChild(heading);
+                entry.items.forEach((item) => block.appendChild(el('div', 'about-item', item)));
+                box.appendChild(block);
+            });
+            box.appendChild(aboutButton('external', 'Ver todas las versiones en GitHub', () => window.alya.openLink(data.links.releases)));
+            openAboutSub('Novedades', box);
+        }
+
+        function showPrivacy(data) {
+            const box = sectionList(data.privacy);
+            box.appendChild(aboutButton('folder', 'Abrir la carpeta de datos de ALYA', () => window.alya.openDataFolder()));
+            openAboutSub('Privacidad', box);
+        }
+
+        function showLicenses(data) {
+            const box = el('div');
+            data.licenses.forEach((entry) => {
+                const row = el('div', 'license-row');
+                const name = el('span', '', entry.name);
+                if (entry.version) name.appendChild(el('span', 'ver', entry.version));
+                row.appendChild(name);
+                row.appendChild(el('span', 'lic', entry.license));
+                row.appendChild(el('small', '', entry.use));
+                box.appendChild(row);
+            });
+            box.appendChild(
+                el(
+                    'div',
+                    'about-footnote',
+                    'ALYA usa estos componentes de terceros. Cada uno conserva su propia licencia y sus autores.'
+                )
+            );
+            openAboutSub('Licencias de código abierto', box);
+        }
+
+        async function showAbout() {
+            if (!aboutData) aboutData = await window.alya.getAbout().catch(() => null);
+            const data = aboutData;
+            if (!data) return;
+
+            const about = el('div', 'about');
+            about.innerHTML =
+                '<div class="core core-md"><span class="core-wave"></span><span class="core-wave"></span><span class="core-wave"></span>' +
+                '<span class="core-glow"></span><span class="core-ring"></span><img class="core-img avatar-img" alt="ALYA" /></div>';
+            applyAvatar(about);
+            about.appendChild(el('b', '', 'ALYA'));
+            about.appendChild(el('div', 'version', `versión ${data.version}`));
+            about.appendChild(el('p', '', data.tagline));
+
+            // Quién la hizo, con qué motor funciona y si hay conexión ahora.
+            const info = el('div', 'about-info');
+            const addRow = (label, valueNode) => {
+                const row = el('div', 'about-row');
+                row.appendChild(el('span', '', label));
+                row.appendChild(valueNode);
+                info.appendChild(row);
+            };
+            const engineValue = el('span', '', '…');
+            const statusValue = el('span', 'about-status', 'Comprobando…');
+            addRow('Desarrollado por', el('span', '', data.developer));
+            addRow('Motor de IA', engineValue);
+            addRow('Estado', statusValue);
+            about.appendChild(info);
+
+            window.alya
+                .getEngineStatus()
+                .then((engine) => {
+                    engineValue.textContent = `${engine.model} · ${engine.provider}`;
+                    statusValue.textContent = engine.detail;
+                    statusValue.dataset.status = engine.status;
+                })
+                .catch(() => {
+                    engineValue.textContent = '—';
+                    statusValue.textContent = 'No se pudo comprobar';
+                    statusValue.dataset.status = 'offline';
+                });
+
+            const note = el('div', 'about-note');
+            const say = (text) => (note.textContent = text);
+
+            const actions = el('div', 'about-actions');
+            actions.appendChild(aboutButton('list', 'Novedades', () => showChangelog(data)));
+            actions.appendChild(
+                aboutButton('refresh', 'Buscar actualizaciones', async (button) => {
+                    button.disabled = true;
+                    say('Buscando…');
+                    const result = await window.alya.checkForUpdates().catch((err) => ({ status: 'error', message: err.message }));
+                    button.disabled = false;
+                    if (result.status === 'available') {
+                        say(`Hay una versión nueva (${result.version}). Se está descargando: ALYA te avisa cuando esté lista para instalar.`);
+                    } else if (result.status === 'latest') {
+                        say(`Ya tienes la última versión (${result.version}).`);
+                    } else if (result.status === 'dev') {
+                        say('Estás en modo desarrollo: las actualizaciones solo se buscan en la versión instalada.');
+                    } else {
+                        say(`No se pudo comprobar: ${result.message || 'error desconocido'}.`);
+                    }
+                })
+            );
+            actions.appendChild(
+                aboutButton('alert', 'Reportar un error', () => {
+                    window.alya.openLink(data.links.reportBug);
+                    say('Se abrió GitHub. Pega ahí la info del sistema (el botón de al lado la copia).');
+                })
+            );
+            actions.appendChild(
+                aboutButton('copy', 'Copiar info del sistema', async (button) => {
+                    button.disabled = true;
+                    try {
+                        await navigator.clipboard.writeText(await window.alya.getSystemInfoText());
+                        say('Información copiada. No incluye claves, rutas ni conversaciones.');
+                    } catch (err) {
+                        say('No se pudo copiar la información.');
+                    }
+                    button.disabled = false;
+                })
+            );
+            actions.appendChild(aboutButton('external', 'Sitio y documentación en GitHub', () => window.alya.openLink(data.links.repository), true));
+            about.appendChild(actions);
+            about.appendChild(note);
+
+            const links = el('div', 'about-links');
+            const privacyLink = el('button', '', 'Privacidad');
+            privacyLink.addEventListener('click', () => showPrivacy(data));
+            const licensesLink = el('button', '', 'Licencias de código abierto');
+            licensesLink.addEventListener('click', () => showLicenses(data));
+            links.appendChild(privacyLink);
+            links.appendChild(licensesLink);
+            about.appendChild(links);
+            about.appendChild(el('div', 'about-copy', `© ${data.year} ${data.developer}`));
+
+            openModal('Acerca de ALYA', about);
+        }
+
+        const MENU_ACTIONS = {
+            new: newConversation,
+            history: () => setSidebar(true, true),
+            settings: () => window.alya.openSettings(),
+            status: () => window.alya.openStatus(),
+            shortcuts: showShortcuts,
+            about: showAbout,
+            quit: () => window.alya.quit(),
+        };
+
+        // Los botones con data-menu viven en el menú ⋯ y al pie de la barra lateral.
+        document.addEventListener('click', (e) => {
+            const button = e.target.closest('button[data-menu]');
+            if (button) {
+                moreMenu.hidden = true;
+                const action = MENU_ACTIONS[button.dataset.menu];
+                if (action) action();
+                return;
+            }
+            // Click fuera del menú: se cierra.
+            if (!moreMenu.hidden && !e.target.closest('.menu-wrap')) moreMenu.hidden = true;
+        });
+
+        moreBtn.addEventListener('click', () => {
+            moreMenu.hidden = !moreMenu.hidden;
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            moreMenu.hidden = true;
+            closeModal();
+            interruptSpeech(); // Esc también la calla si está hablando
+        });
+
+        document.getElementById('settings-btn').addEventListener('click', () => window.alya.openSettings());
+
+        // Botón de voz: silenciada = ALYA se calla en el momento y no vuelve
+        // a hablar hasta reactivarla (sigue respondiendo por escrito).
         const muteBtn = document.getElementById('mute-btn');
-        muteBtn.addEventListener('click', async () => {
-            const muted = await window.alya.toggleMute();
-            muteBtn.textContent = muted ? '🔇 Muda' : '🔊 Voz';
+        let muteBusy = false;
+
+        function renderMute(muted) {
+            muteBtn.classList.toggle('muted', muted);
+            muteBtn.setAttribute('aria-pressed', String(muted));
+            muteBtn.title = muted
+                ? 'ALYA está silenciada: pulsa para que vuelva a hablar (Ctrl + M)'
+                : 'Silenciar la voz de ALYA (Ctrl + M)';
+            muteBtn.innerHTML = `${iconSvg(muted ? 'volumeOff' : 'volume')}<span>${muted ? 'Silenciada' : 'Voz'}</span>`;
+
+            // Al silenciar se corta la frase: el avatar deja de "hablar" ya.
+            if (muted) {
+                activity.speaking = false;
+                refreshState();
+            }
+        }
+
+        async function toggleMute() {
+            if (muteBusy) return; // evita dobles clics que la dejen al revés
+            muteBusy = true;
+            try {
+                renderMute(await window.alya.toggleMute());
+            } catch (err) {
+                console.error('No se pudo cambiar el silencio:', err);
+            } finally {
+                muteBusy = false;
+            }
+        }
+
+        muteBtn.addEventListener('click', toggleMute);
+
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'm') {
+                e.preventDefault();
+                toggleMute();
+            }
         });
 
-        // ---------- Control por voz (micrófono) ----------
-        const micBtn = document.getElementById('mic-btn');
+        // Arranca como quedó la última vez (el silencio se recuerda).
+        window.alya.getMuted().then(renderMute).catch(() => { });
+
+        // ============================================================
+        // Interrumpirla con la voz (opcional: Configuración → "Interrumpirla
+        // con mi voz"). Mientras ALYA habla se mide el volumen del micrófono;
+        // si empiezas a hablar encima, se calla. No se graba ni se envía nada.
+        // ============================================================
+
+        /**
+         * Decide, a partir del volumen del micrófono, si la persona empezó a
+         * hablar encima de ALYA. Recibe el volumen y la hora (no toca el
+         * micrófono), así se puede probar sin audio real.
+         *   1. Antes de que suene nada: mide el ruido de fondo.
+         *   2. Primer tramo de audio: mide cuánto de la voz de ALYA le llega
+         *      al micrófono (con audífonos, casi nada; con parlantes, bastante).
+         *   3. Después: si el volumen supera con claridad ambas cosas, y de
+         *      forma sostenida (no un golpe o un clic), es la persona hablando.
+         */
+        function createVoiceDetector() {
+            const CALIBRATION_MS = 1200; // cuánto se escucha a ALYA antes de dejarse interrumpir
+            const HOLD_MS = 260; // cuánto tiene que durar la voz para contar
+            const MIN_LEVEL = 0.03; // por debajo de esto no es voz cerca del micrófono
+
+            let ambient = 0;
+            let ambientSamples = 0;
+            let playingSince = null;
+            let echoPeak = 0;
+            let smooth = 0;
+            let loudSince = null;
+
+            return {
+                /** Avisa que el audio de ALYA empezó a sonar (solo cuenta la primera vez). */
+                playbackStarted(now) {
+                    if (playingSince === null) playingSince = now;
+                },
+                /** level: volumen RMS (0 a 1). Devuelve true cuando hay que callarla. */
+                push(level, now) {
+                    smooth = smooth * 0.6 + level * 0.4;
+
+                    if (playingSince === null) {
+                        ambientSamples++;
+                        ambient += (level - ambient) / Math.min(ambientSamples, 40);
+                        return false;
+                    }
+                    if (now - playingSince < CALIBRATION_MS) {
+                        echoPeak = Math.max(echoPeak, smooth);
+                        return false;
+                    }
+
+                    const threshold = Math.max(MIN_LEVEL, ambient * 4, echoPeak * 2.2);
+                    if (smooth > threshold) {
+                        if (loudSince === null) loudSince = now;
+                        return now - loudSince >= HOLD_MS;
+                    }
+                    if (smooth < threshold * 0.7) loudSince = null;
+                    return false;
+                },
+            };
+        }
+
+        const voiceWatch = { starting: false, stream: null, context: null, timer: null, detector: null, playedAt: null };
+
+        async function startVoiceWatch() {
+            if (voiceWatch.starting || voiceWatch.stream || isRecording || activity.songListening) return;
+            voiceWatch.starting = true;
+            voiceWatch.playedAt = null;
+
+            let stream = null;
+            try {
+                const settings = await window.alya.getSettings();
+                if (!settings || settings.voiceInterrupt !== true || !activity.speaking) return;
+
+                stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+                });
+                // Mientras se abría el micrófono pudo haber terminado de hablar.
+                if (!activity.speaking || isRecording) {
+                    stopStream(stream);
+                    return;
+                }
+
+                const context = new AudioContext();
+                const analyser = context.createAnalyser();
+                analyser.fftSize = 1024;
+                context.createMediaStreamSource(stream).connect(analyser);
+                const samples = new Float32Array(analyser.fftSize);
+
+                const detector = createVoiceDetector();
+                if (voiceWatch.playedAt !== null) detector.playbackStarted(voiceWatch.playedAt);
+
+                voiceWatch.stream = stream;
+                voiceWatch.context = context;
+                voiceWatch.detector = detector;
+                voiceWatch.timer = setInterval(() => {
+                    analyser.getFloatTimeDomainData(samples);
+                    let sum = 0;
+                    for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+                    const level = Math.sqrt(sum / samples.length);
+                    if (detector.push(level, performance.now())) {
+                        console.log('[ALYA] Te escuché hablar: me callo.');
+                        interruptSpeech();
+                    }
+                }, 40);
+            } catch (err) {
+                stopStream(stream);
+                console.warn('No se pudo usar el micrófono para dejarse interrumpir:', err.message);
+            } finally {
+                voiceWatch.starting = false;
+            }
+        }
+
+        function stopVoiceWatch() {
+            if (voiceWatch.timer) clearInterval(voiceWatch.timer);
+            stopStream(voiceWatch.stream);
+            if (voiceWatch.context) voiceWatch.context.close().catch(() => { });
+            voiceWatch.timer = null;
+            voiceWatch.stream = null;
+            voiceWatch.context = null;
+            voiceWatch.detector = null;
+        }
+
+        // El audio empezó a sonar de verdad (antes de eso solo se preparaba).
+        window.alya.onVoicePlaying(() => {
+            const now = performance.now();
+            if (voiceWatch.playedAt === null) voiceWatch.playedAt = now;
+            if (voiceWatch.detector) voiceWatch.detector.playbackStarted(now);
+        });
+
+        // ============================================================
+        // Control por voz (micrófono)
+        // ============================================================
         let mediaRecorder = null;
         let audioChunks = [];
         let isRecording = false;
@@ -921,7 +3973,21 @@
             return { stream: destination.stream, tracksToStopOnEnd };
         }
 
+        function setRecordingUi(recording) {
+            isRecording = recording;
+            activity.recording = recording;
+            micBtn.classList.toggle('recording', recording);
+            micBtn.innerHTML = iconSvg(recording ? 'stop' : 'mic');
+            refreshState();
+        }
+
         async function startRecording() {
+            // Le vas a hablar: si ALYA estaba hablando, se calla (además, la
+            // grabación incluye el audio del PC y su voz se colaría en tu mensaje).
+            activity.speaking = false;
+            stopVoiceWatch();
+            window.alya.stopSpeaking().catch(() => { });
+
             try {
                 const { stream, tracksToStopOnEnd } = await getMixedRecordingStream();
                 audioChunks = [];
@@ -941,139 +4007,284 @@
                     const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
                     const base64 = await blobToBase64(blob);
 
-                    removeWelcome();
-                    const thinkingRow = addThinking();
+                    // Si había imágenes adjuntas, van junto con lo que dijiste
+                    // (ej. adjuntas una captura y preguntas por voz "¿qué es esto?").
+                    const images = takePendingImages();
+
+                    const showTranscript = (transcript) =>
+                        addMessage('user', transcript, { userImages: images.map((image) => image.previewUrl) });
+
+                    // Lo que entendió llega primero (se muestra como mensaje tuyo)
+                    // y después la respuesta, que se va escribiendo en vivo.
+                    const live = startLiveReply(showTranscript);
                     micBtn.disabled = true;
                     sendBtn.disabled = true;
 
                     try {
                         const { transcript, reply } = await window.alya.sendVoiceMessage(
                             base64,
-                            mediaRecorder.mimeType || 'audio/webm'
+                            mediaRecorder.mimeType || 'audio/webm',
+                            toPayload(images),
+                            live.id
                         );
-                        thinkingRow.remove();
-                        if (transcript) addMessage('user', transcript);
-                        addMessage('assistant', reply.text, reply.imageUrl);
-                        if (reply.pendingConfirmation) addConfirmCard(reply.pendingConfirmation);
+                        const keepScroll = live.finish();
+                        if (transcript) {
+                            if (!live.transcriptShown) showTranscript(transcript);
+                        } else {
+                            // No se escuchó nada: las imágenes no se mandaron,
+                            // las devolvemos a la fila para no perderlas.
+                            pendingImages = images;
+                            renderAttachments();
+                        }
+                        addReply(reply);
+                        keepScroll();
                     } catch (err) {
-                        thinkingRow.remove();
+                        live.finish();
+                        pendingImages = images; // no se mandaron: se devuelven a la fila
+                        renderAttachments();
                         addMessage('assistant', 'No pude procesar el audio: ' + err.message);
+                        flashError();
                     }
 
                     micBtn.disabled = false;
                     sendBtn.disabled = false;
+                    refreshConversations();
                 });
 
                 mediaRecorder.start();
-                isRecording = true;
-                micBtn.classList.add('recording');
-                micBtn.textContent = '⏹';
+                setRecordingUi(true);
             } catch (err) {
                 addMessage(
                     'assistant',
                     'No pude acceder al micrófono. Revisa que Windows le dé permiso a ALYA en ' +
                     'Configuración → Privacidad → Micrófono.'
                 );
+                flashError();
             }
         }
 
         function stopRecording() {
             if (mediaRecorder && isRecording) {
                 mediaRecorder.stop();
-                isRecording = false;
-                micBtn.classList.remove('recording');
-                micBtn.textContent = '🎤';
+                setRecordingUi(false);
             }
         }
 
-        micBtn.addEventListener('click', () => {
+        function toggleRecording() {
             if (isRecording) {
                 stopRecording();
             } else {
                 startRecording();
             }
-        });
+        }
+
+        micBtn.addEventListener('click', toggleRecording);
 
         // Atajo global (Ctrl+Shift+1 por defecto): interruptor — si no está
         // grabando, arranca; si ya está grabando, detiene y manda el audio.
-        window.alya.onTriggerVoice(() => {
-            if (isRecording) {
-                stopRecording();
-            } else {
-                startRecording();
-            }
-        });
+        window.alya.onTriggerVoice(toggleRecording);
 
-        // ---------- Identificar canción (tipo Shazam) ----------
-        const songBtn = document.getElementById('song-btn');
-        const SONG_LISTEN_SECONDS = 8;
+        // ============================================================
+        // Identificar canción
+        // ============================================================
+        // Qué está sonando lo decide main.ts (ver songRecognition.ts): primero
+        // mira lo que Windows reporta (Spotify, YouTube en el navegador...) y
+        // solo si hace falta le pide a esta ventana que ESCUCHE. Escuchar es:
+        //   1) grabar el audio del sistema (lo que suena por tus parlantes o
+        //      audífonos: Discord, un juego, un video, lo que sea);
+        //   2) si por el sistema no suena nada, grabar el micrófono (la
+        //      canción viene de afuera del PC);
+        //   3) comparar un clip corto contra la base de huellas y, si no hay
+        //      coincidencia, seguir grabando y probar con uno más largo.
+        const SONG_CLIP_SECONDS = [8, 16]; // primer intento y segundo (acumulado)
+        const SILENCE_CHECK_MS = 1500;
+        const SILENCE_PEAK = 0.004; // por debajo de esto, se considera que no suena nada
+
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        function stopStream(stream) {
+            if (stream) stream.getTracks().forEach((track) => track.stop());
+        }
+
+        // Audio DEL SISTEMA. getDisplayMedia exige pedir video, así que se
+        // pide mínimo y se descarta enseguida, quedándonos solo con el audio.
+        async function openSystemAudio() {
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+                video: { width: 1, height: 1 },
+                audio: true,
+            });
+            stream.getVideoTracks().forEach((track) => {
+                track.stop();
+                stream.removeTrack(track);
+            });
+            if (stream.getAudioTracks().length === 0) {
+                stopStream(stream);
+                return null;
+            }
+            return stream;
+        }
+
+        // ¿Está en silencio lo que se captura? Mira el volumen durante un
+        // momento; apenas detecta sonido corta y responde que no.
+        async function isStreamSilent(stream) {
+            let audioContext = null;
+            try {
+                audioContext = new AudioContext();
+                if (audioContext.state !== 'running') {
+                    await Promise.race([audioContext.resume(), sleep(300)]);
+                }
+                // Si no se puede medir, se asume que SÍ hay sonido (mejor intentar
+                // identificar que descartar el audio del sistema por error).
+                if (audioContext.state !== 'running') return false;
+
+                const analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                audioContext.createMediaStreamSource(stream).connect(analyser);
+                const samples = new Float32Array(analyser.fftSize);
+
+                const until = Date.now() + SILENCE_CHECK_MS;
+                while (Date.now() < until) {
+                    await sleep(100);
+                    analyser.getFloatTimeDomainData(samples);
+                    for (let i = 0; i < samples.length; i++) {
+                        if (Math.abs(samples[i]) > SILENCE_PEAK) return false;
+                    }
+                }
+                return true;
+            } catch (err) {
+                return false;
+            } finally {
+                if (audioContext) audioContext.close().catch(() => { });
+            }
+        }
+
+        // Graba de corrido y va probando: a los 8 s manda lo grabado; si no
+        // hubo coincidencia sigue grabando y a los 16 s manda TODO lo grabado
+        // (un clip más largo le da más material a la base de huellas).
+        async function recordAndIdentify(stream) {
+            const recorder = new MediaRecorder(stream);
+            const mimeType = recorder.mimeType || 'audio/webm';
+            const chunks = [];
+            let onChunk = null;
+
+            recorder.addEventListener('dataavailable', (e) => {
+                if (e.data.size > 0) chunks.push(e.data);
+                if (onChunk) {
+                    onChunk();
+                    onChunk = null;
+                }
+            });
+
+            // Le pide a la grabadora lo que lleva grabado hasta ahora.
+            const flush = () =>
+                Promise.race([
+                    new Promise((resolve) => {
+                        onChunk = resolve;
+                        recorder.requestData();
+                    }),
+                    sleep(1500),
+                ]);
+
+            recorder.start();
+            const startedAt = Date.now();
+
+            try {
+                for (const seconds of SONG_CLIP_SECONDS) {
+                    const remaining = startedAt + seconds * 1000 - Date.now();
+                    if (remaining > 0) await sleep(remaining);
+                    await flush();
+                    if (chunks.length === 0) continue;
+
+                    const base64 = await blobToBase64(new Blob(chunks, { type: mimeType }));
+                    const { match, error } = await window.alya.identifyClip(base64, mimeType);
+                    if (error) throw new Error(error); // ej. token de AudD inválido: no tiene sentido seguir grabando
+                    if (match) return match;
+                }
+                return null;
+            } finally {
+                if (recorder.state !== 'inactive') recorder.stop();
+            }
+        }
+
+        /**
+         * Escucha lo que suena e intenta identificarlo. Devuelve
+         * { match, source, error? } — source es 'sistema' o 'microfono'.
+         * La llama main.ts (window.alyaListenForSong) cuando hace falta.
+         */
+        async function listenForSong() {
+            if (activity.songListening) {
+                return { match: null, source: null, error: 'Ya estoy escuchando una canción.' };
+            }
+            activity.songListening = true;
+            songBtn.classList.add('listening');
+            refreshState();
+
+            let stream = null;
+            let source = 'sistema';
+
+            try {
+                stream = await openSystemAudio().catch(() => null);
+                if (stream && (await isStreamSilent(stream))) {
+                    stopStream(stream);
+                    stream = null;
+                }
+
+                if (!stream) {
+                    // Por el PC no suena nada: la canción viene de afuera. Se
+                    // apagan los filtros de voz del micrófono, que deforman la música.
+                    source = 'microfono';
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+                    });
+                }
+
+                const match = await recordAndIdentify(stream);
+                return { match, source };
+            } catch (err) {
+                // Los errores que vienen de main.ts llegan con un prefijo técnico de Electron.
+                const message = String(err && err.message ? err.message : err).replace(
+                    /^Error invoking remote method '[^']+':\s*(Error:\s*)?/,
+                    ''
+                );
+                return { match: null, source, error: message };
+            } finally {
+                stopStream(stream);
+                activity.songListening = false;
+                songBtn.classList.remove('listening');
+                refreshState();
+            }
+        }
+
+        window.alyaListenForSong = listenForSong;
 
         songBtn.addEventListener('click', async () => {
             songBtn.disabled = true;
             micBtn.disabled = true;
-            songBtn.classList.add('listening');
-            const originalTitle = songBtn.title;
-            songBtn.title = `Escuchando... (${SONG_LISTEN_SECONDS}s)`;
+
+            const stopThinking = startThinking();
 
             try {
-                // Audio DEL SISTEMA (lo que suena en tu PC), no el micrófono —
-                // mucho más confiable para identificar canciones. getDisplayMedia
-                // exige pedir video, así que lo pedimos mínimo y lo descartamos
-                // enseguida, quedándonos solo con el audio.
-                const rawStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: { width: 1, height: 1 },
-                    audio: true,
-                });
-
-                rawStream.getVideoTracks().forEach((track) => {
-                    track.stop();
-                    rawStream.removeTrack(track);
-                });
-
-                if (rawStream.getAudioTracks().length === 0) {
-                    throw new Error(
-                        'No se pudo capturar el audio del sistema (revisa que algo esté sonando).'
-                    );
-                }
-
-                const stream = rawStream;
-                const chunks = [];
-                const recorder = new MediaRecorder(stream);
-
-                recorder.addEventListener('dataavailable', (e) => {
-                    if (e.data.size > 0) chunks.push(e.data);
-                });
-
-                const finished = new Promise((resolve) => {
-                    recorder.addEventListener('stop', () => {
-                        stream.getTracks().forEach((track) => track.stop());
-                        resolve(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
-                    });
-                });
-
-                recorder.start();
-                await new Promise((r) => setTimeout(r, SONG_LISTEN_SECONDS * 1000));
-                recorder.stop();
-
-                const blob = await finished;
-                const base64 = await blobToBase64(blob);
-
-                removeWelcome();
-                const thinkingRow = addThinking();
-
-                const reply = await window.alya.identifySong(base64, recorder.mimeType || 'audio/webm');
-                thinkingRow.remove();
-                addMessage('assistant', reply.text);
+                const reply = await window.alya.identifySong();
+                stopThinking();
+                addReply(reply);
             } catch (err) {
-                addMessage('assistant', 'No pude escuchar para identificar la canción: ' + err.message);
+                stopThinking();
+                addMessage('assistant', 'No pude identificar la canción: ' + err.message);
+                flashError();
             }
 
             songBtn.disabled = false;
             micBtn.disabled = false;
-            songBtn.classList.remove('listening');
-            songBtn.title = originalTitle;
+            refreshConversations();
         });
 
+        // ============================================================
+        // Arranque
+        // ============================================================
+        setSidebar(initialSidebarState(), false);
+        showWelcome();
+        refreshState();
+        refreshConversations();
         inputEl.focus();
     </script>
 </body>

@@ -2,6 +2,7 @@ import { spawn, exec } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { isSensitivePath } from './secrets';
 
 // Atajos comunes -> carpeta real del usuario. Así ALYA entiende
 // "abre mis descargas" sin que tengas que darle la ruta completa.
@@ -59,6 +60,14 @@ export interface FoundFile {
     path: string;
 }
 
+// Cuántos archivos coincidían pero se dejaron fuera por ser sensibles, en
+// la última búsqueda (para poder decir "hay N que no muestro").
+let hiddenSensitive = 0;
+
+export function getHiddenSensitiveCount(): number {
+    return hiddenSensitive;
+}
+
 const SEARCH_MAX_RESULTS = 20;
 const SEARCH_MAX_DEPTH = 5;
 const SEARCH_TIMEOUT_MS = 8000;
@@ -84,6 +93,7 @@ const IGNORED_DIR_NAMES = new Set(['node_modules', '.git', 'out', 'dist', '$RECY
  */
 export async function searchFiles(query: string, folderInput?: string): Promise<FoundFile[]> {
     const startTime = Date.now();
+    hiddenSensitive = 0;
     const results: FoundFile[] = [];
     const queryLower = query.toLowerCase();
 
@@ -107,11 +117,20 @@ export async function searchFiles(query: string, folderInput?: string): Promise<
             if (results.length >= SEARCH_MAX_RESULTS) return;
             if (Date.now() - startTime > SEARCH_TIMEOUT_MS) return;
 
+            const fullPath = path.join(dir, entry.name);
+
             if (entry.isDirectory()) {
                 if (IGNORED_DIR_NAMES.has(entry.name) || entry.name.startsWith('.')) continue;
-                walk(path.join(dir, entry.name), depth + 1);
+                if (isSensitivePath(fullPath)) continue; // ni se entra (perfiles de navegador, llaves, etc.)
+                walk(fullPath, depth + 1);
             } else if (entry.name.toLowerCase().includes(queryLower)) {
-                results.push({ name: entry.name, path: path.join(dir, entry.name) });
+                // Los archivos que pueden guardar credenciales o cuentas no se
+                // listan: ni su nombre ni su ruta salen de acá.
+                if (isSensitivePath(fullPath)) {
+                    hiddenSensitive++;
+                    continue;
+                }
+                results.push({ name: entry.name, path: fullPath });
             }
         }
     }

@@ -6,13 +6,13 @@
     <title>ALYA — Configuración</title>
     <style>
         :root {
-            --bg: #0a0e14;
-            --panel: #121821;
-            --panel-border: #202b38;
-            --pink: #ff5ea8;
-            --cyan: #4fd1ff;
-            --text: #e4edf5;
-            --dim: #6c7c8c;
+            --bg: #070B12;
+            --panel: #101824;
+            --panel-border: #1B2738;
+            --pink: #8B5CFF;
+            --cyan: #39C6FF;
+            --text: #EAF2FF;
+            --dim: #718096;
             --mono: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
         }
 
@@ -23,8 +23,8 @@
         body {
             margin: 0;
             background:
-                linear-gradient(rgba(79, 209, 255, 0.035) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(79, 209, 255, 0.035) 1px, transparent 1px),
+                linear-gradient(rgba(99, 230, 255, 0.022) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(99, 230, 255, 0.022) 1px, transparent 1px),
                 var(--bg);
             background-size: 22px 22px, 22px 22px, auto;
             color: var(--text);
@@ -35,7 +35,7 @@
         header {
             padding: 14px 20px;
             border-bottom: 1px solid var(--panel-border);
-            background: linear-gradient(180deg, rgba(255, 94, 168, 0.06), rgba(79, 209, 255, 0.03) 60%, transparent);
+            background: linear-gradient(180deg, rgba(139, 92, 255, 0.06), rgba(57, 198, 255, 0.03) 60%, transparent);
             display: flex;
             align-items: center;
             gap: 9px;
@@ -49,7 +49,7 @@
             background: conic-gradient(from 200deg, var(--pink), var(--cyan), var(--pink));
             padding: 2px;
             flex-shrink: 0;
-            box-shadow: 0 0 12px rgba(79, 209, 255, 0.4);
+            box-shadow: 0 0 12px rgba(57, 198, 255, 0.4);
         }
 
         .brand-mark img {
@@ -69,7 +69,7 @@
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
-            filter: drop-shadow(0 0 5px rgba(79, 209, 255, 0.35));
+            filter: drop-shadow(0 0 5px rgba(57, 198, 255, 0.35));
         }
 
         header .subtitle {
@@ -96,6 +96,7 @@
         }
 
         input[type="text"],
+        input[type="password"],
         select {
             width: 100%;
             background: var(--panel);
@@ -109,6 +110,7 @@
         }
 
         input[type="text"]:focus,
+        input[type="password"]:focus,
         select:focus {
             border-color: var(--cyan);
         }
@@ -153,6 +155,32 @@
             accent-color: var(--cyan);
         }
 
+        .field-hint {
+            font-size: 11px;
+            color: var(--dim);
+            line-height: 1.45;
+            margin-top: 6px;
+        }
+
+        .check-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            color: var(--text);
+            font-size: 13px;
+            margin: 0;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+
+        .check-row input {
+            accent-color: var(--cyan);
+            width: 15px;
+            height: 15px;
+            margin: 0;
+        }
+
         .slider-value {
             font-size: 12px;
             color: var(--text);
@@ -164,7 +192,7 @@
         #save-btn {
             width: 100%;
             background: linear-gradient(135deg, var(--pink), var(--cyan));
-            color: #0a0e14;
+            color: #070B12;
             border: none;
             border-radius: 8px;
             padding: 11px 0;
@@ -215,6 +243,155 @@
 
         .section-hint a:hover {
             text-decoration: underline;
+        }
+
+        /* ---------- Guía paso a paso (Spotify) ---------- */
+        .guide-toggle {
+            width: 100%;
+            background: transparent;
+            border: 1px dashed var(--panel-border);
+            color: var(--cyan);
+            border-radius: 8px;
+            padding: 9px 0;
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 14px;
+        }
+
+        .guide-toggle:hover {
+            border-color: var(--cyan);
+        }
+
+        .guide {
+            margin-bottom: 16px;
+            padding: 12px 12px 12px;
+            border: 1px solid var(--panel-border);
+            border-radius: 10px;
+            background: rgba(7, 11, 18, 0.55);
+        }
+
+        .guide[hidden] {
+            display: none;
+        }
+
+        .guide-notes {
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(251, 191, 36, 0.06);
+            border: 1px solid rgba(251, 191, 36, 0.18);
+            font-size: 11.5px;
+            line-height: 1.5;
+            color: #C9D3E3;
+        }
+
+        .guide-notes div+div {
+            margin-top: 5px;
+        }
+
+        .guide-step {
+            display: flex;
+            gap: 10px;
+            margin-top: 13px;
+        }
+
+        .guide-num {
+            width: 20px;
+            height: 20px;
+            flex-shrink: 0;
+            margin-top: 1px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--cyan), var(--pink));
+            color: #050912;
+            font-family: var(--mono);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .guide-step-body {
+            min-width: 0;
+            flex: 1;
+        }
+
+        .guide-step-body b {
+            display: block;
+            font-size: 12.5px;
+            color: var(--text);
+        }
+
+        .guide-step-body p {
+            margin: 3px 0 0;
+            font-size: 12px;
+            line-height: 1.5;
+            color: var(--dim);
+        }
+
+        .guide-copy {
+            display: flex;
+            gap: 6px;
+            margin-top: 7px;
+        }
+
+        .guide-copy code {
+            flex: 1;
+            min-width: 0;
+            padding: 6px 8px;
+            border-radius: 7px;
+            background: var(--bg);
+            border: 1px solid var(--panel-border);
+            font-family: var(--mono);
+            font-size: 10.5px;
+            color: var(--cyan);
+            overflow-x: auto;
+            white-space: nowrap;
+            user-select: all;
+        }
+
+        .guide-btn {
+            padding: 6px 10px;
+            border-radius: 7px;
+            border: 1px solid var(--panel-border);
+            background: var(--panel);
+            color: var(--text);
+            font-size: 11.5px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .guide-btn:hover {
+            border-color: var(--cyan);
+            color: var(--cyan);
+        }
+
+        .guide-step-body .guide-btn {
+            margin-top: 7px;
+        }
+
+        .guide-problems {
+            margin-top: 14px;
+            padding-top: 10px;
+            border-top: 1px solid var(--panel-border);
+        }
+
+        .guide-problems summary {
+            font-size: 12px;
+            color: var(--dim);
+            cursor: pointer;
+        }
+
+        .guide-problem {
+            margin-top: 9px;
+            font-size: 11.5px;
+            line-height: 1.5;
+            color: var(--dim);
+        }
+
+        .guide-problem b {
+            display: block;
+            color: var(--text);
         }
 
         #connect-spotify-btn {
@@ -271,11 +448,54 @@
         </div>
 
         <div class="field">
-            <label for="lengthScale">Velocidad al hablar</label>
+            <label for="tone">Tono de la voz</label>
             <div class="slider-row">
-                <input type="range" id="lengthScale" min="0.8" max="1.6" step="0.05" />
-                <span class="slider-value" id="lengthScaleValue"></span>
+                <input type="range" id="tone" min="0.1" max="2" step="0.05" />
+                <span class="slider-value" id="toneValue"></span>
             </div>
+            <div class="field-hint">Más bajo = voz más grave y serena · más alto = más aguda y animada.
+                Las palabras siempre duran lo mismo. 1.00 es su voz normal.</div>
+        </div>
+
+        <div class="field">
+            <label class="check-row" for="autoExpression">
+                <input type="checkbox" id="autoExpression" />
+                Expresión automática
+            </label>
+            <div class="field-hint">ALYA ajusta sola el tono según lo que dice (alegre, seria, calmada...),
+                partiendo del tono que elijas arriba.</div>
+        </div>
+
+        <div class="field">
+            <label class="check-row" for="voiceInterrupt">
+                <input type="checkbox" id="voiceInterrupt" />
+                Interrumpirla con mi voz
+            </label>
+            <div class="field-hint">Si empiezas a hablar mientras ALYA habla, se calla sola. Solo mide el volumen
+                del micrófono mientras ella habla: no graba ni envía nada. Pensado para audífonos; con parlantes
+                puede no notarte, porque también se escucha a sí misma. Sin esto igual puedes callarla con Esc o
+                con el botón "Callar".</div>
+        </div>
+
+        <div class="field">
+            <label for="thinkingMode">Pensamiento</label>
+            <select id="thinkingMode">
+                <option value="auto">Automático</option>
+                <option value="rapido">Rápido</option>
+                <option value="profundo">Profundo</option>
+            </select>
+            <div class="field-hint">Automático: las órdenes simples ("pon música") salen al instante y las preguntas
+                difíciles las razona antes de responder. Rápido: nunca se detiene a pensar. Profundo: siempre lo
+                piensa a fondo (más lenta).</div>
+        </div>
+
+        <div class="field">
+            <label class="check-row" for="adaptToUser">
+                <input type="checkbox" id="adaptToUser" />
+                Adaptarse a mí
+            </label>
+            <div class="field-hint">ALYA va notando cómo le hablas, a qué horas la usas y qué le pides más, y ajusta
+                sus respuestas a ti. El perfil se guarda en este PC; pídele "¿qué recuerdas de mí?" para verlo.</div>
         </div>
 
         <div class="field">
@@ -309,12 +529,13 @@
 
         <div class="section-title">Spotify</div>
         <div class="section-hint">
-            Para que ALYA pueda reproducir canciones directo en tu Spotify, crea una
-            app gratis en el <a href="#" id="spotify-dashboard-link">dashboard de Spotify
-                for Developers</a>, copia el Client ID y el Client Secret, y agrega
-            <code>http://127.0.0.1:8888/callback</code> como Redirect URI en la
-            configuración de esa app.
+            Para que ALYA reproduzca canciones directo en tu Spotify necesita dos datos de una
+            app que creas gratis en Spotify for Developers: el Client ID y el Client Secret.
+            Si no los tienes todavía, la guía te lleva paso a paso.
         </div>
+
+        <button id="guide-toggle" class="guide-toggle" type="button">Ver la guía paso a paso</button>
+        <div id="spotify-guide" class="guide" hidden></div>
 
         <div class="field">
             <label for="spotifyClientId">Client ID</label>
@@ -323,7 +544,8 @@
 
         <div class="field">
             <label for="spotifyClientSecret">Client Secret</label>
-            <input type="text" id="spotifyClientSecret" placeholder="Client Secret de tu app de Spotify" />
+            <input type="password" id="spotifyClientSecret" placeholder="Client Secret de tu app de Spotify"
+                autocomplete="off" spellcheck="false" />
         </div>
 
         <button id="connect-spotify-btn">Guardar y conectar Spotify</button>
@@ -336,11 +558,15 @@
         });
 
         const userNameInput = document.getElementById('userName');
-        const lengthScaleInput = document.getElementById('lengthScale');
+        const toneInput = document.getElementById('tone');
+        const autoExpressionInput = document.getElementById('autoExpression');
+        const voiceInterruptInput = document.getElementById('voiceInterrupt');
+        const thinkingModeInput = document.getElementById('thinkingMode');
+        const adaptToUserInput = document.getElementById('adaptToUser');
         const noiseScaleInput = document.getElementById('noiseScale');
         const noiseWInput = document.getElementById('noiseW');
         const volumeInput = document.getElementById('volume');
-        const lengthScaleValue = document.getElementById('lengthScaleValue');
+        const toneValue = document.getElementById('toneValue');
         const noiseScaleValue = document.getElementById('noiseScaleValue');
         const noiseWValue = document.getElementById('noiseWValue');
         const volumeValue = document.getElementById('volumeValue');
@@ -348,7 +574,7 @@
         const statusMsg = document.getElementById('status-msg');
 
         function updateSliderLabels() {
-            lengthScaleValue.textContent = parseFloat(lengthScaleInput.value).toFixed(2);
+            toneValue.textContent = parseFloat(toneInput.value).toFixed(2);
             noiseScaleValue.textContent = parseFloat(noiseScaleInput.value).toFixed(2);
             noiseWValue.textContent = parseFloat(noiseWInput.value).toFixed(2);
             volumeValue.textContent = `${parseInt(volumeInput.value, 10)}%`;
@@ -357,14 +583,18 @@
         async function loadCurrentSettings() {
             const settings = await window.alya.getSettings();
             userNameInput.value = settings.userName;
-            lengthScaleInput.value = settings.lengthScale;
+            toneInput.value = settings.tone ?? 1;
+            autoExpressionInput.checked = settings.autoExpression !== false;
+            voiceInterruptInput.checked = settings.voiceInterrupt === true;
+            thinkingModeInput.value = settings.thinkingMode ?? 'auto';
+            adaptToUserInput.checked = settings.adaptToUser !== false;
             noiseScaleInput.value = settings.noiseScale;
             noiseWInput.value = settings.noiseW;
             volumeInput.value = settings.volume ?? 100;
             updateSliderLabels();
         }
 
-        lengthScaleInput.addEventListener('input', updateSliderLabels);
+        toneInput.addEventListener('input', updateSliderLabels);
         noiseScaleInput.addEventListener('input', updateSliderLabels);
         noiseWInput.addEventListener('input', updateSliderLabels);
         volumeInput.addEventListener('input', updateSliderLabels);
@@ -372,7 +602,11 @@
         saveBtn.addEventListener('click', async () => {
             const settings = {
                 userName: userNameInput.value.trim() || 'Andrés',
-                lengthScale: parseFloat(lengthScaleInput.value),
+                tone: parseFloat(toneInput.value),
+                autoExpression: autoExpressionInput.checked,
+                voiceInterrupt: voiceInterruptInput.checked,
+                thinkingMode: thinkingModeInput.value,
+                adaptToUser: adaptToUserInput.checked,
                 noiseScale: parseFloat(noiseScaleInput.value),
                 noiseW: parseFloat(noiseWInput.value),
                 volume: parseInt(volumeInput.value, 10),
@@ -390,15 +624,91 @@
         });
 
         // --- Spotify ---
-        const spotifyDashboardLink = document.getElementById('spotify-dashboard-link');
         const spotifyClientIdInput = document.getElementById('spotifyClientId');
         const spotifyClientSecretInput = document.getElementById('spotifyClientSecret');
         const connectSpotifyBtn = document.getElementById('connect-spotify-btn');
         const spotifyStatus = document.getElementById('spotify-status');
 
-        spotifyDashboardLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            window.alya.openLink('https://developer.spotify.com/dashboard');
+        // --- Guía paso a paso ---
+        // El texto sale de guides.ts (el mismo que ALYA muestra en el chat),
+        // así que acá solo se dibuja.
+        const guideToggle = document.getElementById('guide-toggle');
+        const guideBox = document.getElementById('spotify-guide');
+        let guideProblems = null;
+
+        function make(tag, className, text) {
+            const node = document.createElement(tag);
+            if (className) node.className = className;
+            if (text !== undefined) node.textContent = text;
+            return node;
+        }
+
+        async function renderGuide() {
+            const guide = await window.alya.getGuide('spotify');
+            if (!guide) return false;
+            guideBox.innerHTML = '';
+
+            const notes = make('div', 'guide-notes');
+            guide.notes.forEach((note) => notes.appendChild(make('div', '', note)));
+            guideBox.appendChild(notes);
+
+            guide.steps.forEach((step, index) => {
+                const row = make('div', 'guide-step');
+                row.appendChild(make('div', 'guide-num', String(index + 1)));
+                const body = make('div', 'guide-step-body');
+                body.appendChild(make('b', '', step.title));
+                body.appendChild(make('p', '', step.text));
+
+                if (step.copy) {
+                    const copyRow = make('div', 'guide-copy');
+                    copyRow.appendChild(make('code', '', step.copy));
+                    const copyBtn = make('button', 'guide-btn', 'Copiar');
+                    copyBtn.type = 'button';
+                    copyBtn.addEventListener('click', () => {
+                        navigator.clipboard.writeText(step.copy);
+                        copyBtn.textContent = '✓ Copiado';
+                        setTimeout(() => (copyBtn.textContent = 'Copiar'), 1400);
+                    });
+                    copyRow.appendChild(copyBtn);
+                    body.appendChild(copyRow);
+                }
+                if (step.link) {
+                    const linkBtn = make('button', 'guide-btn', `${step.link.label} ↗`);
+                    linkBtn.type = 'button';
+                    linkBtn.addEventListener('click', () => window.alya.openLink(step.link.url));
+                    body.appendChild(linkBtn);
+                }
+
+                row.appendChild(body);
+                guideBox.appendChild(row);
+            });
+
+            guideProblems = make('details', 'guide-problems');
+            guideProblems.appendChild(make('summary', '', 'Si algo sale mal'));
+            guide.problems.forEach((item) => {
+                const problem = make('div', 'guide-problem');
+                problem.appendChild(make('b', '', item.problem));
+                problem.appendChild(make('span', '', item.fix));
+                guideProblems.appendChild(problem);
+            });
+            guideBox.appendChild(guideProblems);
+            return true;
+        }
+
+        async function showGuide(openProblems) {
+            if (!guideProblems && !(await renderGuide())) return;
+            guideBox.hidden = false;
+            guideToggle.textContent = 'Ocultar la guía';
+            if (openProblems && guideProblems) guideProblems.open = true;
+        }
+
+        guideToggle.addEventListener('click', () => {
+            if (guideBox.hidden) {
+                showGuide(false);
+            } else {
+                guideBox.hidden = true;
+                guideToggle.textContent = 'Ver la guía paso a paso';
+            }
         });
 
         async function loadSpotifyStatus() {
@@ -440,6 +750,8 @@
             } else {
                 spotifyStatus.textContent = result.error || 'No se pudo conectar con Spotify.';
                 spotifyStatus.className = 'spotify-status error';
+                // Algo falló: se abre la guía en la parte de "si algo sale mal".
+                showGuide(true);
             }
         });
 

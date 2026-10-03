@@ -2,6 +2,7 @@ import * as dotenv from 'dotenv';
 import { app, Tray, Menu, BrowserWindow, ipcMain, Notification, nativeImage, session, globalShortcut, desktopCapturer, dialog, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import { pathToFileURL } from 'url';
 
 // El .env vive en lugares distintos según el modo:
 // - En desarrollo (npm start): en la raíz del proyecto, junto al código.
@@ -14,6 +15,44 @@ const envPath = app.isPackaged
   : path.join(__dirname, '..', '.env');
 
 dotenv.config({ path: envPath }); // Carga el .env ANTES de cualquier otra cosa
+
+// Con qué nombre se presenta ALYA ante Windows. Sin esto, las
+// notificaciones salen firmadas como "electron.app.Electron".
+// - Instalada: tiene que ser el mismo "appId" de package.json, que es el
+//   que el instalador le pone al acceso directo del Menú Inicio — así
+//   Windows muestra el nombre "ALYA" con su icono.
+// - En desarrollo (npm start) no hay acceso directo registrado, y Windows
+//   muestra este texto tal cual: por eso se usa directamente "ALYA".
+const APP_USER_MODEL_ID = app.isPackaged ? 'com.andres.alya' : 'ALYA';
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+}
+
+// Lo mismo para la barra de tareas: al hacer click derecho sobre el botón
+// de ALYA, Windows muestra el nombre y el icono del PROGRAMA que abrió la
+// ventana — y con "npm start" ese programa es electron.exe, así que salía
+// "Electron" con su logo. Acá se le dice a Windows, ventana por ventana,
+// qué nombre e icono mostrar y cómo volver a abrir ALYA (lo que usa
+// "Anclar a la barra de tareas").
+// Se aplica a TODA ventana que se cree (chat, estado, configuración,
+// Spotify...), sin tener que acordarse en cada una.
+app.on('browser-window-created', (_event, window) => {
+  if (process.platform !== 'win32') return;
+  try {
+    window.setAppDetails({
+      appId: APP_USER_MODEL_ID,
+      appIconPath: getResourcePath('build', 'icon.ico'),
+      appIconIndex: 0,
+      // Instalada, ALYA es su propio .exe. En desarrollo hay que decirle a
+      // electron.exe qué proyecto abrir.
+      relaunchCommand: app.isPackaged ? `"${process.execPath}"` : `"${process.execPath}" "${app.getAppPath()}"`,
+      relaunchDisplayName: 'ALYA',
+    });
+  } catch (err) {
+    console.warn('[ALYA] No se pudo ajustar el nombre en la barra de tareas:', (err as Error).message);
+  }
+});
 
 /**
  * Agrega o actualiza variables puntuales en el .env SIN pisar las demás
@@ -124,9 +163,31 @@ function showFirstRunSetupIfNeeded(): Promise<void> {
 import AutoLaunch from 'auto-launch';
 
 import { getStatus, getTopProcesses, getNetworkLatency } from './systemTools';
-import { speak, startVoiceServer, stopVoiceServer } from './voice';
-import { sendMessage, resetChat, confirmPendingAction, cancelPendingAction, transcribeAudio } from './ai';
-import { identifySong } from './songid';
+import {
+  speak,
+  startVoiceServer,
+  stopVoiceServer,
+  setSpeakingListener,
+  setPlaybackListener,
+  waitUntilQuiet,
+  isMuted,
+  setMuted,
+  stopSpeaking,
+  createSpeechStream,
+} from './voice';
+import {
+  sendMessage,
+  type ReplyStreamHandlers,
+  resetChat,
+  restoreChat,
+  confirmPendingAction,
+  cancelPendingAction,
+  transcribeAudio,
+  setSettingsOpener,
+  getEngineInfo,
+} from './ai';
+import { identifySong, type SongMatch } from './songid';
+import { recognizeSong, describeRecognition, setAudioListener, type ListenResult } from './songRecognition';
 import { startReminderScheduler } from './reminders';
 import { loadSettings, saveSettings, type AlyaSettings } from './settingsStore';
 import { startKickChatListener } from './kickChat';
@@ -138,7 +199,22 @@ import { loadProjects, type Project } from './projectsStore';
 import { getResourcePath } from './resourcePaths';
 import { startSpotifyAuth, isSpotifyConnected } from './spotify';
 import { autoUpdater } from 'electron-updater';
-import type { SystemStatus, ChatMessage } from './types';
+import {
+  listConversations,
+  getConversation,
+  appendMessages,
+  deleteConversation,
+  setFavorite,
+  type Conversation,
+  type ConversationSummary,
+  type StoredMessage,
+} from './conversationsStore';
+import { buildCard } from './cards';
+import { getGuide, type Guide } from './guides';
+import { DEVELOPER, TAGLINE, LINKS, CHANGELOG, PRIVACY, LICENSES, modelLabel } from './aboutInfo';
+import { getFingerprintProblem } from './songid';
+import * as os from 'os';
+import type { SystemStatus, ChatMessage, ChatImage } from './types';
 
 // Cambia esto por tu nombre
 // El nombre ya no es una constante fija — se lee de la configuración
@@ -295,12 +371,15 @@ function toggleStatusWindow(): void {
 // --- Ventana de chat (el "cerebro" de ALYA) ---
 function createChatWindow(): void {
   chatWindow = new BrowserWindow({
-    width: 420,
-    height: 620,
+    width: 980,
+    height: 680,
+    minWidth: 440,
+    minHeight: 560,
     show: false,
     resizable: true,
     frame: true,
     title: 'ALYA',
+    backgroundColor: '#070B12', // mismo fondo que la interfaz: sin destello blanco al abrir
     icon: getResourcePath('build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -309,6 +388,14 @@ function createChatWindow(): void {
   });
 
   chatWindow.loadFile(path.join(__dirname, 'chat.html'));
+
+  // Sin el menú de Electron ya no hay atajo para las herramientas de
+  // desarrollo; en modo desarrollo (npm start) se abren con F12.
+  if (!app.isPackaged) {
+    chatWindow.webContents.on('before-input-event', (_event, input) => {
+      if (input.type === 'keyDown' && input.key === 'F12') chatWindow?.webContents.toggleDevTools();
+    });
+  }
 
   chatWindow.on('close', (e) => {
     e.preventDefault();
@@ -327,6 +414,30 @@ function toggleChatWindow(): void {
     chatWindow.focus();
   }
 }
+
+// Para escuchar una canción hace falta la ventana de chat (es la que puede
+// grabar audio), aunque esté oculta. Si todavía no existe, se crea y se
+// espera a que termine de cargar.
+async function getLoadedChatWindow(): Promise<BrowserWindow> {
+  if (!chatWindow) createChatWindow();
+  const win = chatWindow!;
+  if (win.webContents.isLoading()) {
+    await new Promise<void>((resolve) => win.webContents.once('did-finish-load', () => resolve()));
+  }
+  return win;
+}
+
+// Así es como el reconocimiento de canciones (songRecognition.ts) le pide
+// a la ventana de chat que escuche. El "true" marca la llamada como si
+// viniera de un click del usuario: capturar el audio del sistema lo exige,
+// y acá el pedido puede venir de un mensaje de voz o de texto.
+setAudioListener(async (): Promise<ListenResult> => {
+  // Si ALYA está diciendo algo ("Déjame escuchar…"), se espera a que
+  // termine: se va a escuchar el audio del PC y su voz se mezclaría.
+  await waitUntilQuiet();
+  const win = await getLoadedChatWindow();
+  return win.webContents.executeJavaScript('window.alyaListenForSong()', true);
+});
 
 // --- Atajo de teclado global: abre ALYA y arranca a grabar, desde
 // cualquier lugar de Windows, sin tener que hacer click en nada. ---
@@ -407,16 +518,26 @@ function createTray(): void {
   tray.on('click', toggleChatWindow);
 }
 
+/**
+ * Muestra una notificación de Windows con el avatar de ALYA. El nombre
+ * "ALYA" ya lo pone Windows en el encabezado, así que el título se
+ * aprovecha para decir algo útil en vez de repetirlo.
+ */
+function notify(title: string, body: string): void {
+  const icon = nativeImage.createFromPath(getResourcePath('build', 'avatar.png'));
+  new Notification({ title, body, icon: icon.isEmpty() ? undefined : icon }).show();
+}
+
 function greet(): void {
   const hour = new Date().getHours();
   let saludo = 'Buenas noches';
   if (hour >= 5 && hour < 12) saludo = 'Buenos días';
   else if (hour >= 12 && hour < 20) saludo = 'Buenas tardes';
 
-  const mensaje = `${saludo}, ${loadSettings().userName}. ALYA está en línea.`;
+  const saludoCompleto = `${saludo}, ${loadSettings().userName}`;
 
-  new Notification({ title: 'ALYA', body: mensaje }).show();
-  speak(mensaje);
+  notify(saludoCompleto, 'ALYA está en línea.');
+  speak(`${saludoCompleto}. ALYA está en línea.`);
 }
 
 // --- Evitar que ALYA se abra dos veces a la vez ---
@@ -442,7 +563,21 @@ if (!gotSingleInstanceLock) {
     // Primera vez que se abre ALYA sin una key de Gemini configurada:
     // mostramos la pantalla de bienvenida y esperamos a que termine
     // antes de seguir con el resto del arranque normal.
+    // Fuera el menú genérico de Electron (File / Edit / View / Window / Help):
+    // ALYA trae su propio menú dentro de la ventana de chat.
+    Menu.setApplicationMenu(null);
+
     await showFirstRunSetupIfNeeded();
+
+    // Le avisa a la ventana de chat cuándo ALYA empieza y termina de
+    // hablar, para que el avatar lo muestre.
+    setSpeakingListener((speaking) => {
+      if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('alya:speaking', speaking);
+    });
+    // Y cuándo un audio empieza a sonar de verdad (ver "Interrumpirla con mi voz").
+    setPlaybackListener(() => {
+      if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('alya:voicePlaying');
+    });
 
     createTray();
     await ensureAutoLaunch();
@@ -471,8 +606,8 @@ if (!gotSingleInstanceLock) {
     // cuanto vuelve a abrir. Siempre avisa por notificación + voz, sin
     // importar el estado de silencio del chat (es un aviso importante).
     startReminderScheduler((reminder) => {
-      new Notification({ title: 'ALYA — Recordatorio', body: reminder.mensaje }).show();
-      speak(reminder.mensaje);
+      notify('Recordatorio', reminder.mensaje);
+      speak(reminder.mensaje, undefined, { force: true }); // suena aunque la voz esté silenciada
     });
 
     // Reacción a "!play <canción>" en el chat en vivo — misma lógica sin
@@ -588,23 +723,139 @@ ipcMain.handle('alya:getProjects', async (): Promise<Project[]> => {
 });
 
 // Chat con ALYA (el cerebro, vía Gemini)
-let isMuted = false;
+// (Si la voz está silenciada lo decide voice.ts: speak() no hace nada mientras lo esté.)
 
-ipcMain.handle('alya:chat', async (_event, userMessage: string): Promise<ChatMessage> => {
-  try {
-    const reply = await sendMessage(userMessage);
-    if (reply.text && !isMuted) speak(reply.text); // ALYA lee su respuesta en voz alta
-    return reply;
-  } catch (err) {
-    const errorText = `Tuve un problema para responder: ${(err as Error).message}`;
-    if (!isMuted) speak('Tuve un problema para responder.'); // versión corta, no lee el error técnico
-    return { role: 'assistant', text: errorText };
+// Imágenes adjuntas en el chat: llegan desde la ventana ya reducidas y en
+// base64. Igual se validan acá (nunca confiar a ciegas en lo que manda una
+// ventana): solo formatos de imagen que Gemini acepta, máximo 4 por
+// mensaje, y con un tope de tamaño por imagen.
+const MAX_CHAT_IMAGES = 4;
+const MAX_IMAGE_BASE64_LENGTH = 8 * 1024 * 1024; // ~6 MB de imagen real
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+function sanitizeChatImages(images: unknown): ChatImage[] {
+  if (!Array.isArray(images)) return [];
+  return images
+    .filter(
+      (img): img is ChatImage =>
+        !!img &&
+        typeof img.mimeType === 'string' &&
+        typeof img.data === 'string' &&
+        ALLOWED_IMAGE_TYPES.has(img.mimeType) &&
+        img.data.length > 0 &&
+        img.data.length <= MAX_IMAGE_BASE64_LENGTH
+    )
+    .slice(0, MAX_CHAT_IMAGES)
+    .map((img) => ({ mimeType: img.mimeType, data: img.data }));
+}
+
+// --- Historial: la conversación que se está teniendo ahora ---
+// null = todavía no se guardó nada (se crea con el primer mensaje).
+let currentConversationId: string | null = null;
+
+/**
+ * Guarda en el historial un intercambio: lo que dijo el usuario (si
+ * hubo; userText null = ALYA habló sin un mensaje suyo, ej. botón 🎵) y
+ * la respuesta de ALYA.
+ */
+function saveExchange(userText: string | null, imageCount: number, reply: ChatMessage): void {
+  const now = Date.now();
+  const messages: StoredMessage[] = [];
+
+  if (userText !== null && (userText.trim() || imageCount > 0)) {
+    messages.push({ role: 'user', text: userText, at: now, imageCount: imageCount || undefined });
   }
+  messages.push({ role: 'assistant', text: reply.text, at: now, imageUrl: reply.imageUrl, cards: reply.cards });
+
+  currentConversationId = appendMessages(currentConversationId, messages);
+}
+
+/** Le devuelve al modelo el contexto de la conversación actual (o empieza de cero). */
+function reloadChatContext(): void {
+  resetChat();
+  const conversation = currentConversationId ? getConversation(currentConversationId) : null;
+  if (!conversation) return;
+  try {
+    restoreChat(conversation.messages);
+  } catch (err) {
+    console.warn('[ALYA] No se pudo retomar el contexto de la conversación:', (err as Error).message);
+  }
+}
+
+/**
+ * Respuesta en vivo: mientras el modelo escribe, el texto se le va
+ * mandando a la ventana que preguntó (para que la burbuja se vaya
+ * llenando) y a la voz (que dice cada frase apenas está completa, sin
+ * esperar al final). "streamId" lo pone la ventana para saber a qué
+ * burbuja corresponde cada aviso; sin él, solo se habla.
+ */
+function openReplyStream(sender: Electron.WebContents, streamId: unknown) {
+  const id = typeof streamId === 'string' && streamId.length > 0 && streamId.length <= 64 ? streamId : null;
+  const speech = createSpeechStream();
+  let shown = '';
+
+  const send = (payload: { text?: string; transcript?: string }): void => {
+    if (!id || sender.isDestroyed()) return;
+    sender.send('alya:chatStream', { id, ...payload });
+  };
+
+  const handlers: ReplyStreamHandlers = {
+    onText: (textSoFar, mood, settled) => {
+      if (textSoFar !== shown) {
+        shown = textSoFar;
+        send({ text: textSoFar });
+      }
+      speech.push(textSoFar, mood, settled);
+    },
+  };
+
+  return {
+    handlers,
+    /** Lo que se entendió de un mensaje de voz (para mostrarlo antes de la respuesta). */
+    transcript: (text: string): void => send({ transcript: text }),
+    /** La respuesta ya está completa: se dice lo que faltaba. */
+    finish: (reply: ChatMessage): void => {
+      if (reply.text) speech.end(reply.text, reply.mood);
+    },
+  };
+}
+
+// Callar a ALYA (tecla Esc, botón "Callar", o al empezar a grabar un
+// mensaje de voz): corta lo que esté diciendo. No la deja silenciada: la
+// próxima respuesta la dice normal.
+ipcMain.handle('alya:stopSpeaking', async (): Promise<void> => {
+  stopSpeaking();
+});
+
+ipcMain.handle(
+  'alya:chat',
+  async (event, userMessage: string, images?: unknown, streamId?: unknown): Promise<ChatMessage> => {
+    // Mensaje nuevo: si todavía estaba diciendo la respuesta anterior, se calla.
+    stopSpeaking();
+    const live = openReplyStream(event.sender, streamId);
+    try {
+      const chatImages = sanitizeChatImages(images);
+      const reply = await sendMessage(userMessage, chatImages, live.handlers);
+      saveExchange(userMessage, chatImages.length, reply);
+      live.finish(reply); // lo que faltaba por decir (el resto ya lo fue diciendo mientras llegaba)
+      return reply;
+    } catch (err) {
+      const errorText = `Tuve un problema para responder: ${(err as Error).message}`;
+      speak('Tuve un problema para responder.'); // versión corta, no lee el error técnico
+      return { role: 'assistant', text: errorText };
+    }
+  }
+);
+
+ipcMain.handle('alya:getMuted', async (): Promise<boolean> => {
+  return isMuted();
 });
 
 ipcMain.handle('alya:toggleMute', async (): Promise<boolean> => {
-  isMuted = !isMuted;
-  return isMuted;
+  // Silenciar corta lo que esté diciendo en ese instante y vacía lo que
+  // tenía pendiente; el estado queda guardado para la próxima vez.
+  setMuted(!isMuted());
+  return isMuted();
 });
 
 // Ruta del avatar: las ventanas no pueden calcular esto solas de forma
@@ -612,6 +863,12 @@ ipcMain.handle('alya:toggleMute', async (): Promise<boolean> => {
 ipcMain.handle('alya:getAvatarUrl', async (): Promise<string> => {
   const avatarPath = getResourcePath('build', 'avatar.png');
   return `file://${avatarPath.replace(/\\/g, '/')}`;
+});
+
+// Lo mismo para la imagen de fondo de la ventana de chat. Para cambiar el
+// fondo alcanza con reemplazar build\background.jpg por otra imagen.
+ipcMain.handle('alya:getBackgroundUrl', async (): Promise<string> => {
+  return pathToFileURL(getResourcePath('build', 'background.jpg')).href;
 });
 
 // Configuración: obtener/guardar. Al guardar, reiniciamos la conversación
@@ -622,8 +879,12 @@ ipcMain.handle('alya:getSettings', async (): Promise<AlyaSettings> => {
 });
 
 ipcMain.handle('alya:saveSettings', async (_event, settings: AlyaSettings): Promise<void> => {
-  saveSettings(settings);
-  resetChat();
+  // Se mezcla con lo ya guardado para no perder ningún ajuste que el
+  // panel no haya mandado.
+  saveSettings({ ...loadSettings(), ...settings });
+  // Sesión nueva con el modelo (para que tome los ajustes), pero sin
+  // perder el hilo de la conversación que está abierta.
+  reloadChatContext();
 });
 
 // Credenciales de Spotify: se guardan en el .env (no en configuracion.json,
@@ -661,19 +922,28 @@ ipcMain.handle('alya:getSpotifyStatus', async (): Promise<{ hasCredentials: bool
 // Para abrir links externos (ej. el dashboard de Spotify) desde ventanas
 // que no son la de bienvenida — esa ya tenía su propio setup:openLink.
 ipcMain.handle('alya:openLink', async (_event, url: string): Promise<void> => {
-  shell.openExternal(url);
+  // Solo páginas web: una ventana nunca debería poder pedir que se abra
+  // otra cosa (un programa, un archivo) por este camino.
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
+});
+
+// Guías paso a paso (ver guides.ts) para el panel de Configuración.
+ipcMain.handle('alya:getGuide', async (_event, id: string): Promise<Guide | null> => {
+  return getGuide(String(id));
 });
 
 // Confirmación de acciones sensibles (ej. cerrar una app)
 ipcMain.handle('alya:confirmAction', async (): Promise<ChatMessage> => {
   const reply = await confirmPendingAction();
-  if (reply.text && !isMuted) speak(reply.text);
+  saveExchange(null, 0, reply);
+  if (reply.text) speak(reply.text, reply.mood);
   return reply;
 });
 
 ipcMain.handle('alya:cancelAction', async (): Promise<ChatMessage> => {
   const reply = cancelPendingAction();
-  if (reply.text && !isMuted) speak(reply.text);
+  saveExchange(null, 0, reply);
+  if (reply.text) speak(reply.text, reply.mood);
   return reply;
 });
 
@@ -681,7 +951,14 @@ ipcMain.handle('alya:cancelAction', async (): Promise<ChatMessage> => {
 // hubieras escrito (reutiliza toda la lógica de herramientas/confirmación).
 ipcMain.handle(
   'alya:sendVoiceMessage',
-  async (_event, audioBase64: string, mimeType: string): Promise<{ transcript: string; reply: ChatMessage }> => {
+  async (
+    event,
+    audioBase64: string,
+    mimeType: string,
+    images?: unknown,
+    streamId?: unknown
+  ): Promise<{ transcript: string; reply: ChatMessage }> => {
+    stopSpeaking(); // le estás hablando: que no siga con lo anterior
     const transcript = await transcribeAudio(audioBase64, mimeType);
 
     if (!transcript || transcript === '[silencio]') {
@@ -691,41 +968,224 @@ ipcMain.handle(
       };
     }
 
-    const reply = await sendMessage(transcript);
-    if (reply.text && !isMuted) speak(reply.text);
+    const chatImages = sanitizeChatImages(images);
+    const live = openReplyStream(event.sender, streamId);
+    live.transcript(transcript); // la ventana muestra lo que entendió antes de que llegue la respuesta
+    const reply = await sendMessage(transcript, chatImages, live.handlers);
+    saveExchange(transcript, chatImages.length, reply);
+    live.finish(reply);
     return { transcript, reply };
   }
 );
 
-// Identificar canción (tipo Shazam): graba un clip, lo manda a AudD, y le
-// pasamos el resultado a ALYA para que lo cuente de forma natural.
+// Identificar canción (botón 🎵): averigua qué está sonando — primero lo
+// que reporta Windows (Spotify, YouTube en el navegador...) y, si hace
+// falta, escuchando el audio — y le pasa el resultado a ALYA para que lo
+// cuente de forma natural.
+ipcMain.handle('alya:identifySong', async (): Promise<ChatMessage> => {
+  // Quieres saber qué suena: si ALYA seguía hablando de otra cosa, se calla.
+  stopSpeaking();
+  try {
+    const recognition = await recognizeSong();
+    const userName = loadSettings().userName;
+    const described = describeRecognition(recognition);
+
+    const prompt =
+      `(Sistema: ${userName} apretó el botón de identificar canción. Resultado: ` +
+      `${JSON.stringify(described)}. ` +
+      `Dile de forma breve y natural qué canción es y de quién. Si hay dato de audio y de Windows y no ` +
+      `coinciden, la canción es la identificada por audio. Si solo hay un título de pestaña o video, ` +
+      `saca de ahí la canción y el artista si se entiende. Si no se pudo identificar, dilo sin inventar nada.)`;
+
+    const reply = await sendMessage(prompt);
+
+    // La misma tarjeta que saldría si se lo hubieran pedido por chat.
+    const songCard = buildCard('identificar_cancion', {}, described);
+    if (songCard) reply.cards = [songCard, ...(reply.cards ?? [])];
+
+    saveExchange(null, 0, reply);
+    if (reply.text) speak(reply.text, reply.mood);
+    return reply;
+  } catch (err) {
+    const errorText = `No pude identificar la canción: ${(err as Error).message}`;
+    speak('No pude identificar la canción.');
+    return { role: 'assistant', text: errorText };
+  }
+});
+
+// Compara un clip de audio (grabado por la ventana de chat) contra la base
+// de huellas de AudD. Lo usa la ventana mientras escucha: prueba con un
+// clip corto y, si no hay coincidencia, con uno más largo.
 ipcMain.handle(
-  'alya:identifySong',
-  async (_event, audioBase64: string, mimeType: string): Promise<ChatMessage> => {
+  'alya:identifyClip',
+  async (_event, audioBase64: string, mimeType: string): Promise<{ match: SongMatch | null; error?: string }> => {
+    // El error vuelve como dato (no como excepción): así la ventana lo
+    // recibe limpio y Electron no llena la consola con un volcado.
     try {
-      const match = await identifySong(audioBase64, mimeType);
-      const userName = loadSettings().userName;
-
-      const prompt = match
-        ? `(Sistema: identifiqué esta canción con una herramienta externa: "${match.title}" de ` +
-        `${match.artist}${match.album ? `, del álbum "${match.album}"` : ''}${match.releaseDate ? ` (${match.releaseDate})` : ''}. ` +
-        `Cuéntaselo a ${userName} de forma breve y natural.)`
-        : '(Sistema: intenté identificar la canción que está sonando pero no encontré ' +
-        `ninguna coincidencia. Avísale a ${userName} brevemente, sin inventar un resultado.)`;
-
-      const reply = await sendMessage(prompt);
-      if (reply.text && !isMuted) speak(reply.text);
-      return reply;
+      return { match: await identifySong(audioBase64, mimeType) };
     } catch (err) {
-      const errorText = `No pude identificar la canción: ${(err as Error).message}`;
-      if (!isMuted) speak('No pude identificar la canción.');
-      return { role: 'assistant', text: errorText };
+      return { match: null, error: (err as Error).message };
     }
   }
 );
 
 ipcMain.handle('alya:resetChat', async (): Promise<void> => {
+  currentConversationId = null; // el próximo mensaje empieza una conversación nueva en el historial
+  cancelPendingAction();
   resetChat();
+});
+
+// --- Historial de conversaciones (barra lateral del chat) ---
+ipcMain.handle(
+  'alya:listConversations',
+  async (): Promise<{ currentId: string | null; conversations: ConversationSummary[] }> => {
+    return { currentId: currentConversationId, conversations: listConversations() };
+  }
+);
+
+// Abre una conversación guardada y deja al modelo con ese contexto, para
+// poder seguirla donde quedó.
+ipcMain.handle('alya:openConversation', async (_event, id: string): Promise<Conversation | null> => {
+  const conversation = getConversation(String(id));
+  if (!conversation) return null;
+  currentConversationId = conversation.id;
+  cancelPendingAction();
+  reloadChatContext();
+  return conversation;
+});
+
+ipcMain.handle('alya:deleteConversation', async (_event, id: string): Promise<void> => {
+  deleteConversation(String(id));
+  if (currentConversationId === id) {
+    currentConversationId = null;
+    cancelPendingAction();
+    resetChat();
+  }
+});
+
+ipcMain.handle('alya:setFavorite', async (_event, id: string, favorite: boolean): Promise<void> => {
+  setFavorite(String(id), favorite === true);
+});
+
+// --- Menú propio de la ventana de chat (reemplaza al de Electron) ---
+function showSettingsWindow(): void {
+  if (!settingsWindow) createSettingsWindow();
+  settingsWindow?.show();
+  settingsWindow?.focus();
+}
+
+ipcMain.handle('alya:openSettings', async (): Promise<void> => {
+  showSettingsWindow();
+});
+
+// Para que ALYA pueda abrir el panel cuando le piden "llévame a configurar eso".
+setSettingsOpener(showSettingsWindow);
+
+ipcMain.handle('alya:openStatus', async (): Promise<void> => {
+  if (!statusWindow) createStatusWindow();
+  statusWindow?.show();
+  statusWindow?.focus();
+});
+
+ipcMain.handle('alya:getAppInfo', async (): Promise<{ version: string; userName: string; voiceShortcut: string }> => {
+  return { version: app.getVersion(), userName: loadSettings().userName, voiceShortcut: 'Ctrl + Shift + 1' };
+});
+
+// --- Ventana "Acerca de ALYA" ---
+
+/** Versión instalada de una dependencia (para la lista de licencias). */
+function packageVersion(name: string): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return String(require(`${name}/package.json`).version ?? '') || null;
+  } catch {
+    return null; // algunos paquetes no dejan leer su package.json: se muestra sin versión
+  }
+}
+
+// Todo lo fijo de la ventana (rápido). El estado de conexión se pide aparte
+// porque puede tardar unos segundos.
+ipcMain.handle('alya:getAbout', async () => {
+  return {
+    version: app.getVersion(),
+    developer: DEVELOPER,
+    tagline: TAGLINE,
+    links: LINKS,
+    changelog: CHANGELOG,
+    privacy: PRIVACY,
+    licenses: LICENSES.map((entry) => ({
+      name: entry.name,
+      license: entry.license,
+      use: entry.use,
+      version:
+        entry.name === 'Electron' ? process.versions.electron : entry.packageName ? packageVersion(entry.packageName) : null,
+    })),
+    year: new Date().getFullYear(),
+  };
+});
+
+ipcMain.handle('alya:getEngineStatus', async () => {
+  const engine = await getEngineInfo();
+  return { model: modelLabel(engine.model), provider: 'Google', status: engine.status, detail: engine.detail };
+});
+
+/**
+ * Texto para pegar en un reporte de error: versiones y equipo. A propósito
+ * NO incluye nombre de usuario, rutas, claves ni nada de tus conversaciones.
+ */
+ipcMain.handle('alya:getSystemInfoText', async (): Promise<string> => {
+  const [engine, status] = await Promise.all([
+    getEngineInfo().catch(() => null),
+    getStatus().catch(() => null),
+  ]);
+  const settings = loadSettings();
+
+  const lines = [
+    `ALYA ${app.getVersion()}${app.isPackaged ? '' : ' (desarrollo)'}`,
+    `Electron ${process.versions.electron} · Chromium ${process.versions.chrome} · Node ${process.versions.node}`,
+    `Sistema: ${os.type()} ${os.release()} (${os.arch()})`,
+    status ? `CPU: ${status.cpu.model} (${status.cpu.cores} núcleos)` : null,
+    status ? `RAM: ${status.ram.totalGB} GB` : null,
+    status && status.gpu.length > 0 ? `GPU: ${status.gpu.map((g) => g.model).join(', ')}` : null,
+    engine ? `Motor: ${modelLabel(engine.model)} — ${engine.detail}` : null,
+    `Pensamiento: ${settings.thinkingMode ?? 'auto'}`,
+    `Spotify por API: ${isSpotifyConnected() ? 'conectada' : 'no conectada'}`,
+    `Reconocimiento por audio: ${getFingerprintProblem() ? 'no disponible' : 'disponible'}`,
+    `Idioma del sistema: ${app.getLocale()}`,
+  ];
+  return lines.filter(Boolean).join('\n');
+});
+
+// "Buscar actualizaciones": la misma revisión que ALYA hace sola, pero a pedido.
+ipcMain.handle(
+  'alya:checkForUpdates',
+  async (): Promise<{ status: 'dev' | 'latest' | 'available' | 'error'; version?: string; message?: string }> => {
+    if (!app.isPackaged) return { status: 'dev' };
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      const latest = result?.updateInfo?.version;
+      if (latest && latest !== app.getVersion()) return { status: 'available', version: latest };
+      return { status: 'latest', version: app.getVersion() };
+    } catch (err) {
+      return { status: 'error', message: (err as Error).message };
+    }
+  }
+);
+
+// Abre en el Explorador la carpeta donde ALYA guarda tus datos.
+ipcMain.handle('alya:openDataFolder', async (): Promise<void> => {
+  shell.openPath(app.getPath('userData'));
+});
+
+ipcMain.handle('alya:quit', async (): Promise<void> => {
+  app.exit(0);
+});
+
+// Tarjeta de archivos encontrados: abre el Explorador con el archivo seleccionado.
+ipcMain.handle('alya:showInFolder', async (_event, filePath: string): Promise<boolean> => {
+  if (typeof filePath !== 'string' || !fs.existsSync(filePath)) return false;
+  shell.showItemInFolder(filePath);
+  return true;
 });
 
 // Mantener viva la app aunque se cierren todas las ventanas (vive en el tray)

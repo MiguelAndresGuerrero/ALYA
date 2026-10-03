@@ -11,3 +11,6 @@ piper/
 # Basura del sistema
 .DS_Store
 Thumbs.db
+
+# Capturas y archivos que deja Claude al trabajar en el proyecto
+Claude outputs/
