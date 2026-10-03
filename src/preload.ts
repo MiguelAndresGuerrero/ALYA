@@ -24,10 +24,19 @@ contextBridge.exposeInMainWorld('alya', {
   sendChatMessage: (text: string, images?: ChatImage[], streamId?: string): Promise<ChatMessage> =>
     ipcRenderer.invoke('alya:chat', text, images ?? [], streamId),
   // La respuesta mientras se escribe: "text" es TODO el texto hasta ahora
-  // (no solo lo nuevo); "transcript", lo que se entendió de un mensaje de voz.
-  onChatStream: (callback: (update: { id: string; text?: string; transcript?: string }) => void): void => {
-    ipcRenderer.on('alya:chatStream', (_event, update: { id: string; text?: string; transcript?: string }) =>
+  // (no solo lo nuevo); "transcript", lo que se entendió de un mensaje de voz;
+  // "notice", un aviso mientras se espera (ej. el modelo está saturado).
+  onChatStream: (callback: (update: { id: string; text?: string; transcript?: string; notice?: string }) => void): void => {
+    ipcRenderer.on('alya:chatStream', (_event, update: { id: string; text?: string; transcript?: string; notice?: string }) =>
       callback(update)
+    );
+  },
+  // Captura de pantalla para adjuntar a un mensaje: una imagen por pantalla.
+  captureScreen: (): Promise<{ images: ChatImage[]; error?: string }> => ipcRenderer.invoke('alya:captureScreen'),
+  // Lo mismo, pero disparado por el atajo global (Ctrl+Shift+2).
+  onScreenCaptured: (callback: (capture: { images: ChatImage[]; error?: string }) => void): void => {
+    ipcRenderer.on('alya:screen-captured', (_event, capture: { images: ChatImage[]; error?: string }) =>
+      callback(capture)
     );
   },
   // Corta lo que ALYA esté diciendo (no la deja silenciada).
@@ -79,7 +88,7 @@ contextBridge.exposeInMainWorld('alya', {
   // Menú propio de la ventana de chat
   openSettings: (): Promise<void> => ipcRenderer.invoke('alya:openSettings'),
   openStatus: (): Promise<void> => ipcRenderer.invoke('alya:openStatus'),
-  getAppInfo: (): Promise<{ version: string; userName: string; voiceShortcut: string }> =>
+  getAppInfo: (): Promise<{ version: string; userName: string; voiceShortcut: string; screenShortcut: string }> =>
     ipcRenderer.invoke('alya:getAppInfo'),
   quit: (): Promise<void> => ipcRenderer.invoke('alya:quit'),
 

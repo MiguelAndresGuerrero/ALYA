@@ -1207,6 +1207,13 @@
             height: 13px;
         }
 
+        /* Aviso mientras se espera (ej. "Gemini está con mucha demanda…") */
+        .thinking-note {
+            margin-top: 7px;
+            font-size: 12px;
+            color: var(--dim);
+        }
+
         .thinking-dots {
             display: flex;
             gap: 5px;
@@ -2379,6 +2386,7 @@
                     <div class="composer-row">
                         <button class="tool-btn" id="attach-btn" title="Adjuntar imagen (también puedes pegarla con Ctrl+V o arrastrarla a la ventana)"><span data-icon="plus"></span></button>
                         <input type="file" id="file-input" accept="image/*" multiple hidden />
+                        <button class="tool-btn" id="screen-btn" title="Capturar mi pantalla y adjuntarla (o Ctrl+Shift+2 desde cualquier lugar)"><span data-icon="monitor"></span></button>
                         <button class="tool-btn" id="mic-btn" title="Hablar (o Ctrl+Shift+1 desde cualquier lugar)"><span data-icon="mic"></span></button>
                         <button class="tool-btn" id="song-btn" title="¿Qué canción es esta? (Spotify, YouTube, Discord o lo que esté sonando)"><span data-icon="music"></span></button>
                         <textarea id="input" rows="1" placeholder="Escribe a ALYA..."></textarea>
@@ -3000,8 +3008,20 @@
             const live = {
                 id,
                 transcriptShown: false,
-                update({ text, transcript }) {
+                update({ text, transcript, notice }) {
                     if (finished) return;
+
+                    // Aviso mientras todavía no hay respuesta (ej. el modelo está
+                    // saturado y se reintenta): va debajo de los puntitos.
+                    if (notice && !row) {
+                        const pending = stopThinking.row && stopThinking.row.querySelector('.msg');
+                        if (pending) {
+                            let note = pending.querySelector('.thinking-note');
+                            if (!note) note = pending.appendChild(el('div', 'thinking-note'));
+                            note.textContent = notice;
+                            scrollToEnd();
+                        }
+                    }
 
                     if (transcript && onTranscript && !live.transcriptShown) {
                         live.transcriptShown = true;
@@ -3199,7 +3219,54 @@
             addImageFiles(files);
         });
 
-        // 3) Arrastrar y soltar sobre la ventana. Hay que cancelar SIEMPRE
+        // 3) Captura de pantalla: con el botón del compositor, o con el atajo
+        // global (Ctrl+Shift+2), que saca la foto ANTES de traer esta
+        // ventana al frente. En los dos casos queda adjunta, lista para que
+        // escribas o digas la pregunta. La ventana de ALYA no sale en ella.
+        const screenBtn = document.getElementById('screen-btn');
+
+        function addScreenCapture(capture) {
+            const images = (capture && capture.images) || [];
+            if (images.length === 0) {
+                const reason = capture && capture.error ? `: ${capture.error}` : '.';
+                addMessage('assistant', `No pude capturar la pantalla${reason}`);
+                flashError();
+                return;
+            }
+
+            let added = 0;
+            for (const image of images) {
+                if (pendingImages.length >= MAX_IMAGES) break;
+                pendingImages.push({
+                    mimeType: image.mimeType,
+                    data: image.data,
+                    previewUrl: `data:${image.mimeType};base64,${image.data}`,
+                });
+                added++;
+            }
+            if (added < images.length) {
+                addMessage('assistant', `Puedo recibir hasta ${MAX_IMAGES} imágenes por mensaje.`);
+            }
+
+            renderAttachments();
+            inputEl.focus();
+        }
+
+        screenBtn.addEventListener('click', async () => {
+            if (screenBtn.disabled) return;
+            screenBtn.disabled = true;
+            try {
+                addScreenCapture(await window.alya.captureScreen());
+            } catch (err) {
+                addScreenCapture({ images: [], error: err.message });
+            } finally {
+                screenBtn.disabled = false;
+            }
+        });
+
+        window.alya.onScreenCaptured(addScreenCapture);
+
+        // 4) Arrastrar y soltar sobre la ventana. Hay que cancelar SIEMPRE
         // dragover/drop: si no, Electron abre el archivo en vez del chat.
         let dragDepth = 0;
         window.addEventListener('dragenter', (e) => {
@@ -3508,6 +3575,7 @@
                 ['Hablar con ALYA desde cualquier lugar', info.voiceShortcut],
                 ['Enviar el mensaje', 'Enter'],
                 ['Salto de línea', 'Shift + Enter'],
+                ['Mostrarle tu pantalla (adjunta una captura)', info.screenShortcut || 'Ctrl + Shift + 2'],
                 ['Pegar una imagen o un recorte', 'Ctrl + V'],
                 ['Callar a ALYA mientras habla', 'Esc'],
                 ['Silenciar o reactivar la voz', 'Ctrl + M'],

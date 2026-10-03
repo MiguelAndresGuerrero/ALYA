@@ -163,6 +163,7 @@ function showFirstRunSetupIfNeeded(): Promise<void> {
 import AutoLaunch from 'auto-launch';
 
 import { getStatus, getTopProcesses, getNetworkLatency } from './systemTools';
+import { captureAllScreens } from './screenCapture';
 import {
   speak,
   startVoiceServer,
@@ -177,6 +178,7 @@ import {
 } from './voice';
 import {
   sendMessage,
+  describeModelError,
   type ReplyStreamHandlers,
   resetChat,
   restoreChat,
@@ -456,6 +458,39 @@ function triggerVoiceCapture(): void {
   }
 }
 
+// --- Atajo global de captura: saca una foto de la pantalla TAL COMO ESTÁ
+// (antes de traer la ventana de ALYA al frente), abre el chat y deja la
+// captura adjunta para que solo falte escribir o decir la pregunta. ---
+let screenCaptureBusy = false;
+
+async function triggerScreenCapture(): Promise<void> {
+  if (screenCaptureBusy) return; // el atajo se repite si se deja apretado
+  screenCaptureBusy = true;
+  try {
+    let images: ChatImage[] = [];
+    let error: string | undefined;
+    try {
+      images = await captureScreensForChat();
+    } catch (err) {
+      error = (err as Error).message;
+      console.warn('[ALYA] No se pudo capturar la pantalla:', error);
+    }
+
+    const win = await getLoadedChatWindow();
+    win.show();
+    win.focus();
+    win.webContents.send('alya:screen-captured', { images, error });
+  } finally {
+    screenCaptureBusy = false;
+  }
+}
+
+/** Las pantallas, listas para adjuntarse a un mensaje del chat. */
+async function captureScreensForChat(): Promise<ChatImage[]> {
+  const screens = await captureAllScreens();
+  return screens.slice(0, MAX_CHAT_IMAGES).map((shot) => ({ mimeType: shot.mimeType, data: shot.base64 }));
+}
+
 // --- Ventana de configuración ---
 function createSettingsWindow(): void {
   settingsWindow = new BrowserWindow({
@@ -675,6 +710,16 @@ if (!gotSingleInstanceLock) {
         `No se pudo registrar el atajo ${VOICE_SHORTCUT} — probablemente otro programa ya lo está usando.`
       );
     }
+
+    // Y el de "mira mi pantalla": captura lo que haya en ese momento.
+    const screenRegistered = globalShortcut.register(SCREEN_SHORTCUT, () => {
+      void triggerScreenCapture();
+    });
+    if (!screenRegistered) {
+      console.warn(
+        `No se pudo registrar el atajo ${SCREEN_SHORTCUT} — probablemente otro programa ya lo está usando.`
+      );
+    }
   });
 
   app.on('will-quit', () => {
@@ -730,6 +775,7 @@ ipcMain.handle('alya:getProjects', async (): Promise<Project[]> => {
 // ventana): solo formatos de imagen que Gemini acepta, máximo 4 por
 // mensaje, y con un tope de tamaño por imagen.
 const MAX_CHAT_IMAGES = 4;
+const SCREEN_SHORTCUT = 'CommandOrControl+Shift+2';
 const MAX_IMAGE_BASE64_LENGTH = 8 * 1024 * 1024; // ~6 MB de imagen real
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
@@ -794,7 +840,7 @@ function openReplyStream(sender: Electron.WebContents, streamId: unknown) {
   const speech = createSpeechStream();
   let shown = '';
 
-  const send = (payload: { text?: string; transcript?: string }): void => {
+  const send = (payload: { text?: string; transcript?: string; notice?: string }): void => {
     if (!id || sender.isDestroyed()) return;
     sender.send('alya:chatStream', { id, ...payload });
   };
@@ -807,6 +853,9 @@ function openReplyStream(sender: Electron.WebContents, streamId: unknown) {
       }
       speech.push(textSoFar, mood, settled);
     },
+    // Gemini saturado: se avisa en la burbuja de "pensando" mientras se prueba
+    // con otro modelo o se reintenta.
+    onNotice: (text) => send({ notice: text }),
   };
 
   return {
@@ -819,6 +868,19 @@ function openReplyStream(sender: Electron.WebContents, streamId: unknown) {
     },
   };
 }
+
+// Botón "capturar pantalla" del chat: devuelve una imagen por pantalla
+// (sin la ventana de ALYA) para adjuntarlas al mensaje.
+ipcMain.handle(
+  'alya:captureScreen',
+  async (): Promise<{ images: ChatImage[]; error?: string }> => {
+    try {
+      return { images: await captureScreensForChat() };
+    } catch (err) {
+      return { images: [], error: (err as Error).message };
+    }
+  }
+);
 
 // Callar a ALYA (tecla Esc, botón "Callar", o al empezar a grabar un
 // mensaje de voz): corta lo que esté diciendo. No la deja silenciada: la
@@ -840,8 +902,9 @@ ipcMain.handle(
       live.finish(reply); // lo que faltaba por decir (el resto ya lo fue diciendo mientras llegaba)
       return reply;
     } catch (err) {
-      const errorText = `Tuve un problema para responder: ${(err as Error).message}`;
-      speak('Tuve un problema para responder.'); // versión corta, no lee el error técnico
+      // En pantalla va la explicación; el error técnico completo queda en la consola.
+      const errorText = `Tuve un problema para responder: ${describeModelError(err)}`;
+      speak('Tuve un problema para responder.'); // versión corta, no lee los detalles
       return { role: 'assistant', text: errorText };
     }
   }
@@ -959,22 +1022,30 @@ ipcMain.handle(
     streamId?: unknown
   ): Promise<{ transcript: string; reply: ChatMessage }> => {
     stopSpeaking(); // le estás hablando: que no siga con lo anterior
-    const transcript = await transcribeAudio(audioBase64, mimeType);
+    let transcript = '';
+    try {
+      transcript = await transcribeAudio(audioBase64, mimeType);
 
-    if (!transcript || transcript === '[silencio]') {
-      return {
-        transcript: '',
-        reply: { role: 'assistant', text: 'No alcancé a escuchar nada, ¿puedes repetirlo?' },
-      };
+      if (!transcript || transcript === '[silencio]') {
+        return {
+          transcript: '',
+          reply: { role: 'assistant', text: 'No alcancé a escuchar nada, ¿puedes repetirlo?' },
+        };
+      }
+
+      const chatImages = sanitizeChatImages(images);
+      const live = openReplyStream(event.sender, streamId);
+      live.transcript(transcript); // la ventana muestra lo que entendió antes de que llegue la respuesta
+      const reply = await sendMessage(transcript, chatImages, live.handlers);
+      saveExchange(transcript, chatImages.length, reply);
+      live.finish(reply);
+      return { transcript, reply };
+    } catch (err) {
+      // Mismo trato que un mensaje escrito: explicación en pantalla, sin volcado técnico.
+      const errorText = `Tuve un problema para responder: ${describeModelError(err)}`;
+      speak('Tuve un problema para responder.');
+      return { transcript, reply: { role: 'assistant', text: errorText } };
     }
-
-    const chatImages = sanitizeChatImages(images);
-    const live = openReplyStream(event.sender, streamId);
-    live.transcript(transcript); // la ventana muestra lo que entendió antes de que llegue la respuesta
-    const reply = await sendMessage(transcript, chatImages, live.handlers);
-    saveExchange(transcript, chatImages.length, reply);
-    live.finish(reply);
-    return { transcript, reply };
   }
 );
 
@@ -1007,7 +1078,7 @@ ipcMain.handle('alya:identifySong', async (): Promise<ChatMessage> => {
     if (reply.text) speak(reply.text, reply.mood);
     return reply;
   } catch (err) {
-    const errorText = `No pude identificar la canción: ${(err as Error).message}`;
+    const errorText = `No pude identificar la canción: ${describeModelError(err)}`;
     speak('No pude identificar la canción.');
     return { role: 'assistant', text: errorText };
   }
@@ -1087,9 +1158,17 @@ ipcMain.handle('alya:openStatus', async (): Promise<void> => {
   statusWindow?.focus();
 });
 
-ipcMain.handle('alya:getAppInfo', async (): Promise<{ version: string; userName: string; voiceShortcut: string }> => {
-  return { version: app.getVersion(), userName: loadSettings().userName, voiceShortcut: 'Ctrl + Shift + 1' };
-});
+ipcMain.handle(
+  'alya:getAppInfo',
+  async (): Promise<{ version: string; userName: string; voiceShortcut: string; screenShortcut: string }> => {
+    return {
+      version: app.getVersion(),
+      userName: loadSettings().userName,
+      voiceShortcut: 'Ctrl + Shift + 1',
+      screenShortcut: 'Ctrl + Shift + 2',
+    };
+  }
+);
 
 // --- Ventana "Acerca de ALYA" ---
 

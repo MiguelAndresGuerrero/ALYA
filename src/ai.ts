@@ -37,6 +37,20 @@ import type { ChatMessage, ChatImage, ChatCard, PendingConfirmation } from './ty
 
 const MODEL = 'gemini-3.5-flash-lite'; // rápido, barato, ideal para un asistente personal
 
+// "Cerebros" de respaldo: si el principal está saturado (error 503) o se
+// quedó sin cupo (429), la misma pregunta se le hace al siguiente, en este
+// orden — del más barato al más capaz. Cada modelo tiene su propia
+// capacidad en Google, así que es raro que estén todos ocupados a la vez.
+// Para agregar otro alcanza con sumarlo a la lista (y a modelLabel() en
+// aboutInfo.ts, para que salga con nombre en "Acerca de").
+const BACKUP_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash'];
+const MODEL_CHAIN = [MODEL, ...BACKUP_MODELS];
+
+// Un modelo que acaba de fallar por saturación "descansa" este rato: los
+// mensajes siguientes van directo al que sí responde, sin perder tiempo
+// probándolo otra vez. Pasado el descanso se vuelve a intentar con él.
+const MODEL_REST_MS = 2 * 60 * 1000;
+
 const SYSTEM_INSTRUCTION_BASE = `
 Eres ALYA, una inteligencia artificial personal tipo JARVIS, creada por Andrés.
 Eres mujer (no "el asistente", sino "ella"). Hablas siempre en español.
@@ -258,6 +272,12 @@ inesperado o impresionante). Solo la etiqueta al principio, una sola vez, y
 después tu respuesta normal — Andrés nunca la ve ni la escucha. No uses
 siempre la misma: elige según lo que estás diciendo de verdad.
 
+Herramientas: se USAN (llamada a función), nunca se escriben. Jamás pongas
+en tu respuesta el nombre de una herramienta ni algo como "estado_sistema()"
+o "print(...)": eso no ejecuta nada y Andrés lo vería como texto sin sentido.
+Si necesitas una herramienta, llámala directamente y responde después, ya con
+su resultado. La etiqueta de ánimo va solo en esa respuesta final.
+
 Responde siempre de forma breve y natural, como en una conversación hablada
 (esto se puede leer en voz alta) — evita listas largas o formato markdown
 pesado salvo que Andrés pida explícitamente algo estructurado.
@@ -399,7 +419,8 @@ const verPantallaDeclaration: FunctionDeclaration = {
         'Toma una captura de TODAS las pantallas conectadas de Andrés (si tiene varios ' +
         'monitores, los ve todos) y las analiza — úsala cuando pregunte qué se ve en su ' +
         'pantalla, qué aplicación tiene abierta, pida que revises algo visualmente, o para ' +
-        'responder preguntas sobre lo que está mostrando en ese momento.',
+        'responder preguntas sobre lo que está mostrando en ese momento. Si en este mismo ' +
+        'mensaje ya te adjuntó una captura o imagen, NO la uses: mira directamente lo adjunto.',
     parametersJsonSchema: {
         type: 'object',
         properties: {
@@ -1142,6 +1163,34 @@ const tools = [
     },
 ];
 
+const TOOL_NAMES = new Set<string>(tools[0].functionDeclarations.map((declaration) => declaration.name ?? ''));
+
+/**
+ * A veces el modelo, en vez de USAR una herramienta, escribe la llamada
+ * como si fuera texto: "estado_sistema()", "print(default_api.abrir_app(
+ * nombre='discord'))"... Eso no ejecuta nada y encima se vería en el chat
+ * como respuesta. Devuelve el nombre de la herramienta si el texto (o su
+ * última línea) es eso, y lo que hubiera escrito antes.
+ */
+function writtenToolCall(raw: string): { name: string; before: string } | null {
+    const text = extractMood(raw)
+        .text.replace(/```[a-z_]*/gi, '')
+        .trim();
+    if (!text) return null;
+
+    const lines = text.split('\n');
+    const lastLine = (lines.pop() ?? '').trim();
+    const match = /^(?:print\s*\(\s*)?(?:default_api\.)?([a-z_][a-z0-9_]*)\s*\(.*\)\s*;?$/i.exec(lastLine);
+    if (!match || !TOOL_NAMES.has(match[1])) return null;
+    return { name: match[1], before: lines.join('\n').trim() };
+}
+
+/** ¿El texto que está llegando empieza como una de esas llamadas escritas? */
+function startsLikeWrittenToolCall(text: string): boolean {
+    const match = /^(?:```[a-z_]*\s*)?(?:print\s*\(\s*)?(?:default_api\.)?([a-z_][a-z0-9_]*)\s*\(/i.exec(text.trimStart());
+    return !!match && TOOL_NAMES.has(match[1]);
+}
+
 // --- Sistema de permisos: herramientas sensibles ---
 // Estas herramientas NUNCA se ejecutan directo, aunque Gemini decida
 // llamarlas — primero se le pide confirmación explícita al usuario (botones
@@ -1812,9 +1861,9 @@ export function restoreChat(messages: Array<{ role: 'user' | 'assistant'; text: 
 export async function transcribeAudio(audioBase64: string, mimeType: string): Promise<string> {
     const client = getClient();
 
-    const response = await withRetry(() =>
+    const response = await withModels((model) =>
         client.models.generateContent({
-            model: MODEL,
+            model,
             contents: [
                 {
                     role: 'user',
@@ -1860,9 +1909,9 @@ async function describeScreen(question?: string): Promise<string> {
 
     const imageParts = screens.map((s) => ({ inlineData: { mimeType: s.mimeType, data: s.base64 } }));
 
-    const response = await withRetry(() =>
+    const response = await withModels((model) =>
         client.models.generateContent({
-            model: MODEL,
+            model,
             contents: [
                 {
                     role: 'user',
@@ -1884,9 +1933,9 @@ async function describeScreen(question?: string): Promise<string> {
 async function searchWeb(query: string): Promise<string> {
     const client = getClient();
 
-    const response = await withRetry(() =>
+    const response = await withModels((model) =>
         client.models.generateContent({
-            model: MODEL,
+            model,
             contents:
                 `Busca información actual sobre esto y responde en español, de forma breve ` +
                 `y natural (como en una conversación hablada): ${query}`,
@@ -1941,9 +1990,9 @@ async function learnFromExchange(userMessage: string, assistantReply: string): P
         const yaSabe = [...loadMemory().slice(-40), ...loadProfile().styleNotes];
         const yaSabeBlock = yaSabe.length > 0 ? yaSabe.map((x) => `- ${x}`).join('\n') : '(nada todavía)';
 
-        const response = await withRetry(() =>
+        const response = await withModels((model) =>
             client.models.generateContent({
-                model: MODEL,
+                model,
                 config: { responseMimeType: 'application/json' },
                 contents:
                     `Este es un intercambio entre ${userName} y su asistente ALYA:\n` +
@@ -2070,7 +2119,10 @@ export async function getEngineInfo(): Promise<EngineInfo> {
     }
 
     if (Date.now() - lastGeminiOkAt < 5 * 60 * 1000) {
-        return { model: MODEL, status: 'connected', detail: 'Conectado' };
+        // Muestra el cerebro que respondió de verdad la última vez.
+        return lastModelUsed === MODEL
+            ? { model: MODEL, status: 'connected', detail: 'Conectado' }
+            : { model: lastModelUsed, status: 'connected', detail: 'Conectado (modelo de respaldo: el principal está saturado)' };
     }
 
     try {
@@ -2093,35 +2145,162 @@ export async function getEngineInfo(): Promise<EngineInfo> {
     }
 }
 
-async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
-    const MAX_INTENTOS = 3;
-    const ESPERAS_MS = [2000, 4000, 8000];
+// Quien esté esperando la respuesta (la ventana de chat) se entera de que
+// se está probando otro modelo o reintentando, para no quedarse mirando
+// "Procesando…" sin saber qué pasa.
+let noticeListener: ((text: string) => void) | null = null;
 
-    for (let intento = 0; intento < MAX_INTENTOS; intento++) {
-        try {
-            const value = await fn();
-            lastGeminiOkAt = Date.now();
-            lastGeminiError = null;
-            return value;
-        } catch (err) {
-            lastGeminiError = (err as Error).message ?? 'error';
-            const mensaje = (err as Error).message ?? '';
-            const esTemporal = mensaje.includes('503') || mensaje.includes('UNAVAILABLE') || mensaje.includes('429');
-            const esUltimoIntento = intento === MAX_INTENTOS - 1;
+function notifyWaiting(text: string): void {
+    try {
+        noticeListener?.(text);
+    } catch {
+        // el aviso es solo informativo
+    }
+}
 
-            if (!esTemporal || esUltimoIntento) throw err;
+const modelRestUntil = new Map<string, number>();
+let lastModelUsed = MODEL;
 
+// Respaldos que esta clave no puede usar (Google responde que el modelo
+// no existe o no está disponible): no se vuelven a probar en esta sesión.
+const unavailableBackups = new Set<string>();
+const activeChain = (): string[] => MODEL_CHAIN.filter((model) => !unavailableBackups.has(model));
+
+const isTemporaryError = (mensaje: string): boolean =>
+    /503|UNAVAILABLE|overloaded|high demand|429|RESOURCE_EXHAUSTED/i.test(mensaje);
+
+/** Los modelos en el orden en que conviene probarlos ahora: primero los que no están descansando. */
+function modelsToTry(): string[] {
+    const now = Date.now();
+    const restOf = (model: string): number => modelRestUntil.get(model) ?? 0;
+    const chain = activeChain();
+    const ready = chain.filter((model) => restOf(model) <= now);
+    const resting = chain.filter((model) => restOf(model) > now).sort((a, b) => restOf(a) - restOf(b));
+    return [...ready, ...resting];
+}
+
+/**
+ * Hace un pedido a Gemini con respaldo: prueba el modelo principal y, si
+ * está saturado, los de respaldo uno por uno. Si TODOS están ocupados,
+ * espera un poco y da otra vuelta (hasta 3 vueltas en total).
+ *
+ * "run" recibe el modelo a usar. Un error que no es de saturación (clave
+ * inválida, pedido mal armado...) corta en el acto si viene del modelo
+ * principal; si viene de un respaldo, ese respaldo se saltea — un
+ * respaldo que no pueda con el pedido nunca debe empeorar las cosas.
+ */
+async function withModels<T>(run: (model: string) => Promise<T>): Promise<T> {
+    const ESPERAS_MS = [1500, 5000]; // entre vuelta y vuelta, cuando ninguno pudo
+    let saturationError: unknown = null;
+    let otherError: unknown = null;
+
+    for (let vuelta = 0; vuelta <= ESPERAS_MS.length; vuelta++) {
+        const order = vuelta === 0 ? modelsToTry() : activeChain();
+
+        for (let i = 0; i < order.length; i++) {
+            const model = order[i];
+            try {
+                const value = await run(model);
+                lastGeminiOkAt = Date.now();
+                lastGeminiError = null;
+                modelRestUntil.delete(model);
+                if (model !== lastModelUsed) {
+                    console.log(
+                        model === MODEL
+                            ? `[ALYA] Vuelve a responder el modelo principal (${MODEL}).`
+                            : `[ALYA] Responde el modelo de respaldo ${model}.`
+                    );
+                }
+                lastModelUsed = model;
+                return value;
+            } catch (err) {
+                const mensaje = (err as Error).message ?? '';
+                lastGeminiError = mensaje || 'error';
+
+                if (isTemporaryError(mensaje)) {
+                    saturationError = err;
+                    modelRestUntil.set(model, Date.now() + MODEL_REST_MS);
+                    const next = order[i + 1];
+                    console.warn(
+                        `[ALYA] ${model} está saturado o sin cupo` + (next ? `; pruebo con ${next}.` : '.')
+                    );
+                    if (next) notifyWaiting('Ese modelo está saturado. Probando con otro…');
+                    continue;
+                }
+
+                // No es saturación. Del principal (o un tema de nivel de
+                // razonamiento, que se resuelve más arriba): sigue su curso.
+                if (model === MODEL || /thinking/i.test(mensaje)) throw err;
+
+                otherError = otherError ?? err;
+                if (/\b404\b|NOT_FOUND|is not found|not supported/i.test(mensaje)) {
+                    unavailableBackups.add(model);
+                    console.warn(`[ALYA] El modelo de respaldo ${model} no está disponible para esta clave; no se vuelve a usar:`, mensaje);
+                } else {
+                    console.warn(`[ALYA] El modelo de respaldo ${model} no pudo con este pedido; se saltea:`, mensaje);
+                }
+            }
+        }
+
+        if (!saturationError) break; // nadie estaba saturado: no tiene sentido esperar
+        if (vuelta < ESPERAS_MS.length) {
             console.warn(
-                `[ALYA] Gemini con alta demanda, reintentando en ${ESPERAS_MS[intento] / 1000}s ` +
-                `(intento ${intento + 1}/${MAX_INTENTOS})...`
+                `[ALYA] Todos los modelos están ocupados; reintento en ${ESPERAS_MS[vuelta] / 1000}s ` +
+                `(vuelta ${vuelta + 1}/${ESPERAS_MS.length + 1})...`
             );
-            await new Promise((resolve) => setTimeout(resolve, ESPERAS_MS[intento]));
+            notifyWaiting('Todos los modelos de Gemini están ocupados. Reintentando…');
+            await new Promise((resolve) => setTimeout(resolve, ESPERAS_MS[vuelta]));
         }
     }
 
-    // Nunca debería llegar acá (el for ya cubre todos los casos), pero
-    // TypeScript necesita un retorno explícito en todos los caminos.
-    throw new Error('Se agotaron los reintentos.');
+    throw saturationError ?? otherError ?? new Error('Se agotaron los reintentos.');
+}
+
+/** El mensaje de adentro cuando el error viene envuelto en JSON (a veces en dos capas). */
+function innerErrorMessage(raw: string): string {
+    let current = raw;
+    for (let depth = 0; depth < 3; depth++) {
+        try {
+            const parsed = JSON.parse(current) as { error?: { message?: unknown }; message?: unknown };
+            const next = parsed?.error?.message ?? parsed?.message;
+            if (typeof next !== 'string' || !next) break;
+            current = next;
+        } catch {
+            break;
+        }
+    }
+    return current;
+}
+
+/**
+ * Explica en palabras normales por qué falló el modelo, para mostrarlo en
+ * el chat. El error técnico completo queda en la consola, no en pantalla.
+ */
+export function describeModelError(err: unknown): string {
+    const raw = err instanceof Error ? err.message : String(err ?? '');
+    console.warn('[ALYA] Error del modelo:', redactSecrets(raw));
+
+    if (/503|UNAVAILABLE|overloaded|high demand/i.test(raw)) {
+        return (
+            'Gemini está saturado en este momento: probé con mi modelo principal y con los de respaldo, varias ' +
+            'veces, y ninguno respondió. No es tu PC ni tu internet: prueba de nuevo en un momento.'
+        );
+    }
+    if (/429|RESOURCE_EXHAUSTED|quota/i.test(raw)) {
+        return 'se alcanzó el límite de uso de tu clave de Gemini en todos mis modelos por ahora. Espera un poco y vuelve a intentarlo.';
+    }
+    if (/Falta configurar GEMINI_API_KEY/.test(raw)) {
+        return 'falta configurar la clave de Gemini.';
+    }
+    if (/API key not valid|API_KEY_INVALID|PERMISSION_DENIED|\b401\b|\b403\b/i.test(raw)) {
+        return 'la clave de Gemini no es válida o no tiene permiso para este modelo.';
+    }
+    if (/fetch failed|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|network/i.test(raw)) {
+        return 'no pude conectarme con Gemini. Revisa tu conexión a internet.';
+    }
+
+    const inner = redactSecrets(innerErrorMessage(raw)).replace(/\s+/g, ' ').trim();
+    return inner.length > 220 ? `${inner.slice(0, 220)}…` : inner || 'error desconocido.';
 }
 
 const TOOL_TIMEOUT_MS = 120000;
@@ -2176,9 +2355,12 @@ function logToolCall(name: string, args: Record<string, unknown>, result: unknow
     console.log(`[ALYA] Herramienta ${name}(${short(redactDeep(args))}) → ${short(redactDeep(result))}`);
 }
 
-// Si el modelo configurado no aceptara elegir el nivel de razonamiento,
-// se anota acá y no se vuelve a intentar (el chat sigue como siempre).
-let thinkingLevelsSupported = true;
+// Si un modelo no aceptara elegir el nivel de razonamiento, se anota acá
+// y con ese modelo no se vuelve a intentar (el chat sigue como siempre).
+const thinkingUnsupported = new Set<string>();
+
+// Modelos que no tienen el nivel "mínimo": con ellos se pide el más bajo que sí aceptan.
+const MODELS_WITHOUT_MINIMAL = new Set<string>(['gemini-3.7-flash', 'gemini-3.8-flash']);
 
 const DEPTH_TO_LEVEL: Record<ThinkingDepth, ThinkingLevel> = {
     MINIMAL: ThinkingLevel.MINIMAL,
@@ -2197,6 +2379,8 @@ const DEPTH_TO_LEVEL: Record<ThinkingDepth, ThinkingLevel> = {
 // una herramienta): se puede decir entero sin esperar a que siga.
 export interface ReplyStreamHandlers {
     onText?: (textSoFar: string, mood: Mood | undefined, settled?: boolean) => void;
+    /** Aviso mientras se espera (se está probando otro modelo, o reintentando). */
+    onNotice?: (text: string) => void;
 }
 
 /** Lo que el modelo devolvió en una vuelta: su texto y las herramientas que pidió. */
@@ -2281,7 +2465,7 @@ async function readStreamedTurn(
     return { text, functionCalls };
 }
 
-/** Una vuelta del modelo: en vivo si alguien está escuchando, completa de una vez si no. */
+/** Una vuelta del modelo (un solo intento): en vivo si alguien está escuchando, completa de una vez si no. */
 async function requestTurn(
     chat: Chat,
     params: SendMessageParameters,
@@ -2289,15 +2473,16 @@ async function requestTurn(
 ): Promise<ModelTurn> {
     if (onDelta && streamingSupported) {
         try {
-            const turn = await withRetry(() => readStreamedTurn(chat, params, onDelta));
+            const turn = await readStreamedTurn(chat, params, onDelta);
             streamFailures = 0;
             return turn;
         } catch (err) {
             const mensaje = (err as Error).message ?? '';
             // Errores que no dependen del modo en vivo (la clave, la cuota,
-            // el servicio caído, el nivel de razonamiento): siguen su curso.
+            // el servicio caído, el nivel de razonamiento, un pedido que ese
+            // modelo rechaza): siguen su curso.
             const ajeno =
-                /thinking|503|UNAVAILABLE|429|RESOURCE_EXHAUSTED|quota|API key|API_KEY|401|403|PERMISSION_DENIED/i.test(
+                /thinking|503|UNAVAILABLE|overloaded|high demand|429|RESOURCE_EXHAUSTED|quota|API key|API_KEY|40[0134]\b|INVALID_ARGUMENT|NOT_FOUND|PERMISSION_DENIED/i.test(
                     mensaje
                 );
             if (ajeno) throw err;
@@ -2308,14 +2493,31 @@ async function requestTurn(
         }
     }
 
-    const response: GenerateContentResponse = await withRetry(() => chat.sendMessage(params));
+    const response: GenerateContentResponse = await chat.sendMessage(params);
     return { text: response.text ?? '', functionCalls: response.functionCalls ?? [] };
+}
+
+/**
+ * Cambia el modelo con el que responde una conversación ya empezada. El
+ * historial se conserva tal cual (Google se encarga de la compatibilidad
+ * entre modelos), así el respaldo sigue el hilo sin que se note el cambio.
+ */
+function useModel(chat: Chat, model: string): void {
+    (chat as unknown as { model: string }).model = model;
+}
+
+/** La configuración para pedirle a ESE modelo cierta profundidad de razonamiento (o nada, si no se puede). */
+function thinkingConfigFor(model: string, depth: ThinkingDepth | undefined): GenerateContentConfig | undefined {
+    if (!depth || !chatConfig || thinkingUnsupported.has(model)) return undefined;
+    const level = depth === 'MINIMAL' && MODELS_WITHOUT_MINIMAL.has(model) ? ThinkingLevel.LOW : DEPTH_TO_LEVEL[depth];
+    return { ...chatConfig, thinkingConfig: { thinkingLevel: level } };
 }
 
 /**
  * Manda un mensaje a la conversación pidiendo cierta profundidad de
  * razonamiento ("depth"). Sin depth, se manda como siempre. Con
  * "onDelta", la respuesta se va entregando a medida que se escribe.
+ * Si el modelo principal está saturado, responde uno de respaldo.
  */
 async function sendToChat(
     chat: Chat,
@@ -2323,25 +2525,24 @@ async function sendToChat(
     depth: ThinkingDepth | undefined,
     onDelta?: (turnTextSoFar: string) => void
 ): Promise<ModelTurn> {
-    const baseConfig = chatConfig;
+    return withModels(async (model) => {
+        useModel(chat, model);
 
-    if (depth && baseConfig && thinkingLevelsSupported) {
-        try {
-            return await requestTurn(
-                chat,
-                { message, config: { ...baseConfig, thinkingConfig: { thinkingLevel: DEPTH_TO_LEVEL[depth] } } },
-                onDelta
-            );
-        } catch (err) {
-            const mensaje = (err as Error).message ?? '';
-            if (!/thinking/i.test(mensaje)) throw err; // otro tipo de error: que siga su curso normal
+        const config = thinkingConfigFor(model, depth);
+        if (config) {
+            try {
+                return await requestTurn(chat, { message, config }, onDelta);
+            } catch (err) {
+                const mensaje = (err as Error).message ?? '';
+                if (!/thinking/i.test(mensaje)) throw err; // otro tipo de error: que siga su curso normal
 
-            thinkingLevelsSupported = false;
-            console.warn('[ALYA] El modelo no aceptó el nivel de razonamiento pedido — sigo sin ajustarlo:', mensaje);
+                thinkingUnsupported.add(model);
+                console.warn(`[ALYA] ${model} no aceptó el nivel de razonamiento pedido — sigo sin ajustarlo:`, mensaje);
+            }
         }
-    }
 
-    return requestTurn(chat, { message }, onDelta);
+        return requestTurn(chat, { message }, onDelta);
+    });
 }
 
 /**
@@ -2360,6 +2561,8 @@ function previewStreamedText(raw: string): { text: string; mood: Mood | undefine
     }
 
     const { text, mood } = extractMood(raw);
+    // Una herramienta escrita como texto (ver writtenToolCall): no se muestra.
+    if (startsLikeWrittenToolCall(text)) return { text: '', mood };
     const lastWordComplete = /\s$/.test(raw);
     let safe = lastWordComplete ? text : text.replace(/\S+$/, '');
 
@@ -2378,6 +2581,23 @@ export async function sendMessage(
     userMessage: string,
     images: ChatImage[] = [],
     handlers: ReplyStreamHandlers = {}
+): Promise<ChatMessage> {
+    noticeListener = handlers.onNotice ?? null;
+    try {
+        return await answerMessage(userMessage, images, handlers);
+    } finally {
+        noticeListener = null;
+    }
+}
+
+// Cuántas veces, como mucho, se le pide al modelo que use de verdad una
+// herramienta que escribió como texto, dentro de un mismo mensaje.
+const MAX_WRITTEN_CALL_RETRIES = 2;
+
+async function answerMessage(
+    userMessage: string,
+    images: ChatImage[],
+    handlers: ReplyStreamHandlers
 ): Promise<ChatMessage> {
     const chat = getChatSession();
     const settings = loadSettings();
@@ -2428,7 +2648,41 @@ export async function sendMessage(
           }
         : undefined;
 
-    let response = await sendToChat(chat, firstMessage, depth, onDelta);
+    // Pide una vuelta al modelo. Si en vez de usar una herramienta la
+    // escribió como texto ("estado_sistema()"), se le pide que la use de
+    // verdad; ese texto nunca llega a la pantalla ni a la voz.
+    let writtenCallRetries = 0;
+    const askModel = async (message: PartListUnion): Promise<ModelTurn> => {
+        let turn = await sendToChat(chat, message, depth, onDelta);
+
+        while (turn.functionCalls.length === 0) {
+            const written = writtenToolCall(turn.text);
+            if (!written) break;
+
+            if (writtenCallRetries >= MAX_WRITTEN_CALL_RETRIES) {
+                console.warn(`[ALYA] El modelo sigue escribiendo ${written.name} como texto; se abandona.`);
+                return {
+                    text: '[apenada] No logré usar esa herramienta en este intento. ¿Me lo pides otra vez?',
+                    functionCalls: [],
+                };
+            }
+            writtenCallRetries++;
+            console.warn(
+                `[ALYA] El modelo escribió la herramienta ${written.name} como texto en vez de usarla; se lo pido de nuevo.`
+            );
+            if (written.before) closeTurnText(written.before);
+            turn = await sendToChat(
+                chat,
+                `(Sistema: escribiste la herramienta ${written.name} como texto, y eso no ejecuta nada. ` +
+                    `Úsala de verdad ahora (llamada a función), sin escribir su nombre, y después responde normal.)`,
+                depth,
+                onDelta
+            );
+        }
+        return turn;
+    };
+
+    let response = await askModel(firstMessage);
     let imageUrl: string | undefined;
     const cards: ChatCard[] = []; // tarjetas con resultados de herramientas (ver cards.ts)
     let newPendingConfirmation: PendingConfirmation | undefined; // solo la de ESTE mensaje
@@ -2494,7 +2748,7 @@ export async function sendMessage(
             });
         }
 
-        response = await sendToChat(chat, functionResponseParts, depth, onDelta);
+        response = await askModel(functionResponseParts);
     }
 
     // La librería de Gemini a veces devuelve una respuesta que es SOLO

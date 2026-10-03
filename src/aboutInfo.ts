@@ -20,6 +20,9 @@ export function modelLabel(modelId: string): string {
     const known: Record<string, string> = {
         'gemini-3.5-flash-lite': 'Gemini 3.5 Flash-Lite',
         'gemini-3.5-flash': 'Gemini 3.5 Flash',
+        'gemini-3.1-flash-lite': 'Gemini 3.1 Flash-Lite',
+        'gemini-3.6-flash': 'Gemini 3.6 Flash',
+        'gemini-3.8-flash': 'Gemini 3.8 Flash',
     };
     return known[modelId] ?? modelId;
 }
@@ -31,6 +34,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+    {
+        version: '1.0.8',
+        date: 'Octubre de 2026',
+        items: [
+            'Muéstrale tu pantalla: el botón nuevo del chat (o Ctrl+Shift+2 desde cualquier lugar) adjunta una captura para que le preguntes por lo que ves.',
+            'Las capturas ya no incluyen la ventana de ALYA y salen a la resolución real de la pantalla.',
+            'Cerebros de respaldo: si el modelo principal está saturado, responde otro automáticamente sin perder el hilo.',
+            'Si aun así ninguno responde, ALYA lo explica en palabras normales, sin mensajes técnicos.',
+            'Corregido: a veces respondía con el nombre de una herramienta ("estado_sistema()") en vez de usarla.',
+        ],
+    },
     {
         version: '1.0.7',
         date: 'Octubre de 2026',
