@@ -1715,6 +1715,10 @@
             gap: 8px;
         }
 
+        .confirm-card.expired {
+            opacity: 0.6;
+        }
+
         .confirm-buttons button {
             flex: 1;
             padding: 8px 0;
@@ -3088,13 +3092,20 @@
                 yesBtn.disabled = true;
                 noBtn.disabled = true;
                 const reply = await action();
+                // La tarjeta ya no era la acción pendiente: se avisa en ella y no se hace nada.
+                if (reply.confirmationExpired) {
+                    card.classList.add('expired');
+                    buttonsRow.replaceWith(el('div', 'confirm-desc', 'Esta confirmación ya expiró: no se hizo nada.'));
+                    return;
+                }
                 card.remove();
                 addReply(reply);
                 refreshConversations();
             };
 
-            yesBtn.addEventListener('click', () => answer(() => window.alya.confirmAction()));
-            noBtn.addEventListener('click', () => answer(() => window.alya.cancelAction()));
+            // Cada tarjeta responde solo por SU acción (su ID).
+            yesBtn.addEventListener('click', () => answer(() => window.alya.confirmAction(pending.id)));
+            noBtn.addEventListener('click', () => answer(() => window.alya.cancelAction(pending.id)));
 
             buttonsRow.appendChild(yesBtn);
             buttonsRow.appendChild(noBtn);

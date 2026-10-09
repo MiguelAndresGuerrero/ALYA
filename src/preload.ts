@@ -49,8 +49,8 @@ contextBridge.exposeInMainWorld('alya', {
   getBackgroundUrl: (): Promise<string> => ipcRenderer.invoke('alya:getBackgroundUrl'),
   saveSettings: (settings: AlyaSettings): Promise<void> =>
     ipcRenderer.invoke('alya:saveSettings', settings),
-  confirmAction: (): Promise<ChatMessage> => ipcRenderer.invoke('alya:confirmAction'),
-  cancelAction: (): Promise<ChatMessage> => ipcRenderer.invoke('alya:cancelAction'),
+  confirmAction: (actionId: string): Promise<ChatMessage> => ipcRenderer.invoke('alya:confirmAction', actionId),
+  cancelAction: (actionId: string): Promise<ChatMessage> => ipcRenderer.invoke('alya:cancelAction', actionId),
   sendVoiceMessage: (
     audioBase64: string,
     mimeType: string,

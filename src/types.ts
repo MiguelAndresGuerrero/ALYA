@@ -32,6 +32,7 @@ export interface ProcessInfo {
 }
 
 export interface PendingConfirmation {
+  id: string; // único por acción: la tarjeta lo manda al confirmar/cancelar
   tool: string;
   args: Record<string, unknown>;
   description: string;
@@ -78,6 +79,7 @@ export interface ChatMessage {
   cards?: ChatCard[]; // tarjetas con resultados de herramientas usadas en esta respuesta
   mood?: Mood; // ánimo con el que ALYA dice esta respuesta (solo afecta la voz)
   pendingConfirmation?: PendingConfirmation;
+  confirmationExpired?: boolean; // la tarjeta respondida ya no era la acción pendiente: no se hizo nada
 }
 
 export interface SystemStatus {

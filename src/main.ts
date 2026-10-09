@@ -184,6 +184,7 @@ import {
   restoreChat,
   confirmPendingAction,
   cancelPendingAction,
+  clearPendingAction,
   transcribeAudio,
   setSettingsOpener,
   getEngineInfo,
@@ -996,15 +997,18 @@ ipcMain.handle('alya:getGuide', async (_event, id: string): Promise<Guide | null
 });
 
 // Confirmación de acciones sensibles (ej. cerrar una app)
-ipcMain.handle('alya:confirmAction', async (): Promise<ChatMessage> => {
-  const reply = await confirmPendingAction();
+// La tarjeta manda el ID de SU acción: si ya no es la pendiente, no se ejecuta nada.
+ipcMain.handle('alya:confirmAction', async (_event, actionId: unknown): Promise<ChatMessage> => {
+  const reply = await confirmPendingAction(typeof actionId === 'string' ? actionId : '');
+  if (reply.confirmationExpired) return reply; // nada que guardar ni decir: lo avisa la tarjeta
   saveExchange(null, 0, reply);
   if (reply.text) speak(reply.text, reply.mood);
   return reply;
 });
 
-ipcMain.handle('alya:cancelAction', async (): Promise<ChatMessage> => {
-  const reply = cancelPendingAction();
+ipcMain.handle('alya:cancelAction', async (_event, actionId: unknown): Promise<ChatMessage> => {
+  const reply = cancelPendingAction(typeof actionId === 'string' ? actionId : '');
+  if (reply.confirmationExpired) return reply;
   saveExchange(null, 0, reply);
   if (reply.text) speak(reply.text, reply.mood);
   return reply;
@@ -1102,7 +1106,7 @@ ipcMain.handle(
 
 ipcMain.handle('alya:resetChat', async (): Promise<void> => {
   currentConversationId = null; // el próximo mensaje empieza una conversación nueva en el historial
-  cancelPendingAction();
+  clearPendingAction();
   resetChat();
 });
 
@@ -1120,7 +1124,7 @@ ipcMain.handle('alya:openConversation', async (_event, id: string): Promise<Conv
   const conversation = getConversation(String(id));
   if (!conversation) return null;
   currentConversationId = conversation.id;
-  cancelPendingAction();
+  clearPendingAction();
   reloadChatContext();
   return conversation;
 });
@@ -1129,7 +1133,7 @@ ipcMain.handle('alya:deleteConversation', async (_event, id: string): Promise<vo
   deleteConversation(String(id));
   if (currentConversationId === id) {
     currentConversationId = null;
-    cancelPendingAction();
+    clearPendingAction();
     resetChat();
   }
 });

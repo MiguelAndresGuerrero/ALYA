@@ -1,4 +1,5 @@
 import { GoogleGenAI, FunctionDeclaration, Chat, ThinkingLevel } from '@google/genai';
+import { randomUUID } from 'crypto';
 import type {
     Content,
     FunctionCall,
@@ -2703,6 +2704,7 @@ async function answerMessage(
             // --- Herramienta sensible: pausar y pedir confirmación ---
             if (CONFIRMATION_REQUIRED_TOOLS.has(name)) {
                 const confirmation: PendingConfirmation = {
+                    id: randomUUID(),
                     tool: name,
                     args,
                     description: redactSecrets(describeAction(name, args)),
@@ -2796,9 +2798,17 @@ async function answerMessage(
  * El usuario apretó "Sí" en el botón de confirmación: ejecuta la acción
  * pendiente de verdad, ahora sí.
  */
-export async function confirmPendingAction(): Promise<ChatMessage> {
-    if (!pendingConfirmation) {
-        return { role: 'assistant', text: 'No hay ninguna acción pendiente de confirmar.' };
+// Respuesta para una tarjeta que ya no corresponde a la acción pendiente
+// (otra la reemplazó, o se canceló/cambió de conversación): no se ejecuta nada.
+const EXPIRED_CONFIRMATION: ChatMessage = {
+    role: 'assistant',
+    text: 'Esa confirmación ya expiró, así que no hice nada.',
+    confirmationExpired: true,
+};
+
+export async function confirmPendingAction(actionId: string): Promise<ChatMessage> {
+    if (!pendingConfirmation || pendingConfirmation.id !== actionId) {
+        return { ...EXPIRED_CONFIRMATION };
     }
 
     const { tool, args } = pendingConfirmation;
@@ -2817,7 +2827,15 @@ export async function confirmPendingAction(): Promise<ChatMessage> {
     return { role: 'assistant', text };
 }
 
-export function cancelPendingAction(): ChatMessage {
+export function cancelPendingAction(actionId: string): ChatMessage {
+    if (!pendingConfirmation || pendingConfirmation.id !== actionId) {
+        return { ...EXPIRED_CONFIRMATION };
+    }
     pendingConfirmation = null;
     return { role: 'assistant', text: 'Cancelado, no hice nada.' };
+}
+
+/** Descarta la acción pendiente sin respuesta (conversación nueva, abierta o borrada). */
+export function clearPendingAction(): void {
+    pendingConfirmation = null;
 }
