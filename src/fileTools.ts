@@ -1,4 +1,5 @@
-import { spawn, exec } from 'child_process';
+import { spawn } from 'child_process';
+import { shell } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -38,21 +39,22 @@ function resolveFolderPath(input: string): string {
  * Abre una carpeta en el Explorador de Windows. Acepta atajos comunes
  * ("descargas", "escritorio") o una ruta completa.
  */
-export function openFolder(input: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const folderPath = resolveFolderPath(input);
+export async function openFolder(input: string): Promise<string> {
+    const folderPath = resolveFolderPath(input);
 
-        if (!fs.existsSync(folderPath)) {
-            return reject(new Error(`No encontré la carpeta: ${folderPath}`));
-        }
+    let stats: fs.Stats;
+    try {
+        stats = fs.statSync(folderPath);
+    } catch {
+        throw new Error(`No encontré la carpeta: ${folderPath}`);
+    }
+    if (!stats.isDirectory()) {
+        throw new Error(`Eso no es una carpeta: ${folderPath}`);
+    }
 
-        exec(`start "" "${folderPath}"`, (error) => {
-            if (error) {
-                return reject(new Error(`No pude abrir la carpeta: ${error.message}`));
-            }
-            resolve(`Abriendo ${folderPath}`);
-        });
-    });
+    const error = await shell.openPath(folderPath);
+    if (error) throw new Error(`No pude abrir la carpeta: ${error}`);
+    return `Abriendo ${folderPath}`;
 }
 
 export interface FoundFile {

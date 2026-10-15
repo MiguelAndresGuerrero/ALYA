@@ -1767,7 +1767,15 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
             const appId = String(args.appId ?? '');
             const esAppDeStore = Boolean(args.esAppDeStore);
             try {
-                await launchProgram({ name: nombre, appId, isStoreApp: esAppDeStore });
+                // Solo se abre un appId que Windows tenga registrado en el Menú Inicio
+                // con ese nombre, nunca una ruta o comando que venga escrito por el modelo.
+                const instalado = (await findInstalledProgram(nombre)).find(
+                    (programa) => programa.appId === appId && programa.isStoreApp === esAppDeStore
+                );
+                if (!instalado) {
+                    return { result: { ok: false, error: `"${nombre}" no aparece instalado con ese appId. Búscalo de nuevo con buscar_programa.` } };
+                }
+                await launchProgram(instalado);
                 return { result: { ok: true, message: `Abriendo ${nombre}` } };
             } catch (err) {
                 return { result: { ok: false, error: (err as Error).message } };

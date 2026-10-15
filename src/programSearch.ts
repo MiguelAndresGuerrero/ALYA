@@ -1,4 +1,6 @@
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
+import * as fs from 'fs';
+import { shell } from 'electron';
 
 export interface InstalledProgram {
     name: string;
@@ -49,18 +51,27 @@ export function findInstalledProgram(query: string): Promise<InstalledProgram[]>
 }
 
 /**
- * Abre un programa/app encontrado con findInstalledProgram. Las apps de
- * la Store se abren distinto (shell:appsFolder) que los accesos directos
- * normales.
+ * Abre un programa/app encontrado con findInstalledProgram, sin pasar por
+ * la consola. Un acceso directo o ejecutable que existe se abre con
+ * Windows; el resto (apps de la Store y IDs de apps registradas) por
+ * shell:appsFolder.
  */
-export function launchProgram(program: InstalledProgram): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const command = program.isStoreApp
-            ? `explorer.exe shell:appsFolder\\${program.appId}`
-            : `start "" "${program.appId}"`;
+export async function launchProgram(program: InstalledProgram): Promise<void> {
+    if (!program.isStoreApp && fs.existsSync(program.appId)) {
+        const error = await shell.openPath(program.appId);
+        if (error) throw new Error(`No pude abrir "${program.name}": ${error}`);
+        return;
+    }
 
-        exec(command, (error) => {
-            if (error) return reject(new Error(`No pude abrir "${program.name}": ${error.message}`));
+    await new Promise<void>((resolve, reject) => {
+        const child = spawn('explorer.exe', [`shell:appsFolder\\${program.appId}`], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+        });
+        child.once('error', (error) => reject(new Error(`No pude abrir "${program.name}": ${error.message}`)));
+        child.once('spawn', () => {
+            child.unref();
             resolve();
         });
     });
