@@ -9,6 +9,8 @@ function resolvePath(input: string): string {
 }
 
 const MAX_READ_CHARS = 30000; // no volcar archivos gigantes completos al chat
+const MAX_READ_BYTES = 2 * 1024 * 1024;
+const BINARY_CHECK_BYTES = 8192;
 
 export function readFile(input: string): string {
     const filePath = resolvePath(input);
@@ -18,18 +20,42 @@ export function readFile(input: string): string {
         throw new Error(`No encontré el archivo: ${filePath}`);
     }
 
-    const stat = fs.statSync(filePath);
+    // Un acceso directo puede apuntar a una llave o a un perfil del navegador:
+    // lo que se revisa es el archivo real, no solo el nombre que se pidió.
+    const realPath = fs.realpathSync.native(filePath);
+    if (isSensitivePath(realPath)) throw new Error(SENSITIVE_FILE_MESSAGE);
+
+    const stat = fs.statSync(realPath);
     if (stat.isDirectory()) {
         throw new Error(`Eso es una carpeta, no un archivo: ${filePath}`);
+    }
+    if (!stat.isFile()) {
+        throw new Error(`Eso no es un archivo normal y no se puede leer: ${filePath}`);
+    }
+
+    // Solo se lee el comienzo: un video o una imagen de disco entera
+    // dejaría a ALYA congelada.
+    const buffer = Buffer.alloc(Math.min(stat.size, MAX_READ_BYTES));
+    const fd = fs.openSync(realPath, 'r');
+    let bytesRead = 0;
+    try {
+        bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    } finally {
+        fs.closeSync(fd);
+    }
+    const data = buffer.subarray(0, bytesRead);
+
+    if (data.subarray(0, BINARY_CHECK_BYTES).includes(0)) {
+        throw new Error(`Es un archivo binario (programa, imagen, comprimido...), no se puede leer como texto: ${filePath}`);
     }
 
     // Aunque el archivo no sea "sensible" por su nombre, puede traer una
     // clave pegada adentro (un config, un script): se tacha antes de salir.
-    const content = redactSecrets(fs.readFileSync(filePath, 'utf8'));
-    if (content.length > MAX_READ_CHARS) {
+    const content = redactSecrets(data.toString('utf8'));
+    if (content.length > MAX_READ_CHARS || stat.size > bytesRead) {
         return (
             content.slice(0, MAX_READ_CHARS) +
-            `\n\n[... archivo cortado, tiene ${content.length} caracteres en total ...]`
+            `\n\n[... archivo cortado, pesa ${(stat.size / 1024).toFixed(0)} KB en total ...]`
         );
     }
     return content;
