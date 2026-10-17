@@ -1,4 +1,5 @@
 import * as http from 'http';
+import { randomBytes } from 'crypto';
 import { SPOTIFY_REDIRECT_URI } from './guides';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -76,17 +77,28 @@ export function startSpotifyAuth(): Promise<void> {
     return new Promise((resolve, reject) => {
         let settled = false;
         let timeoutHandle: NodeJS.Timeout;
+        // Valor al azar que viaja a Spotify y tiene que volver igual: así solo
+        // se acepta la respuesta del login que abrió ALYA, no una petición
+        // armada por otra página o programa contra el puerto local.
+        const expectedState = randomBytes(32).toString('base64url');
+        const callbackPath = new URL(REDIRECT_URI).pathname;
 
         const server = http.createServer(async (req, res) => {
-            // El navegador a veces pide cosas de más (ej. /favicon.ico) al mismo
-            // origen — las ignoramos por completo, solo nos interesa /callback.
-            if (!req.url || !req.url.startsWith('/callback')) {
+            // Solo cuenta exactamente la ruta de regreso (ni /favicon.ico ni /callbackX).
+            const url = new URL(req.url ?? '/', REDIRECT_URI);
+            if (req.method !== 'GET' || url.pathname !== callbackPath) {
                 res.writeHead(404);
                 res.end();
                 return;
             }
 
-            const url = new URL(req.url, REDIRECT_URI);
+            // Sin el state correcto se ignora: no corta el login que está en curso.
+            if (url.searchParams.get('state') !== expectedState) {
+                res.writeHead(403);
+                res.end('Esta respuesta no corresponde al inicio de sesión que abrió ALYA.');
+                return;
+            }
+
             const code = url.searchParams.get('code');
             const error = url.searchParams.get('error');
 
@@ -143,7 +155,8 @@ export function startSpotifyAuth(): Promise<void> {
                 `client_id=${encodeURIComponent(getClientId())}` +
                 `&response_type=code` +
                 `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
-                `&scope=${encodeURIComponent(SCOPES)}`;
+                `&scope=${encodeURIComponent(SCOPES)}` +
+                `&state=${encodeURIComponent(expectedState)}`;
             shell.openExternal(authUrl);
         });
 
