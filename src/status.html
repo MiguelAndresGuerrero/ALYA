@@ -282,14 +282,31 @@
         return;
       }
 
-      projectsBlock.innerHTML = proyectos
-        .map(
-          (p) => `
-            <div class="row"><span class="label">${p.nombre}</span><span class="value">${p.progreso}% — ${p.estado}</span></div>
-            <div class="bar-bg"><div class="bar-fill" style="width:${p.progreso}%"></div></div>
-          `
-        )
-        .join('');
+      // Nombre y estado los escribe el modelo: van como texto, nunca como HTML.
+      const fragment = document.createDocumentFragment();
+      for (const p of proyectos) {
+        const progreso = Math.min(100, Math.max(0, Number(p.progreso) || 0));
+
+        const row = document.createElement('div');
+        row.className = 'row';
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = String(p.nombre ?? '');
+        const value = document.createElement('span');
+        value.className = 'value';
+        value.textContent = `${progreso}% — ${String(p.estado ?? '')}`;
+        row.append(label, value);
+
+        const barBg = document.createElement('div');
+        barBg.className = 'bar-bg';
+        const barFill = document.createElement('div');
+        barFill.className = 'bar-fill';
+        barFill.style.width = `${progreso}%`;
+        barBg.appendChild(barFill);
+
+        fragment.append(row, barBg);
+      }
+      projectsBlock.replaceChildren(fragment);
     }
   </script>
 </body>
