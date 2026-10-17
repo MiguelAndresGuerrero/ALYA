@@ -433,6 +433,23 @@
             background: rgba(251, 191, 36, 0.17);
         }
 
+        /* Escucha activa: verde mientras espera que la llames. */
+        .pill-btn.wake-on {
+            color: var(--ok);
+            border-color: rgba(74, 222, 128, 0.4);
+            background: rgba(74, 222, 128, 0.08);
+        }
+
+        .pill-btn.wake-paused {
+            color: var(--warn);
+            border-color: rgba(251, 191, 36, 0.45);
+        }
+
+        .pill-btn.wake-error {
+            color: var(--danger);
+            border-color: rgba(255, 107, 107, 0.45);
+        }
+
         /* Menú ⋯ */
         .menu-wrap {
             position: relative;
@@ -2338,6 +2355,7 @@
         <div class="top-actions">
             <button class="pill-btn stop-speak" id="stop-speak-btn" hidden title="Callar a ALYA (Esc)"><span data-icon="stop"></span><span>Callar</span></button>
             <button class="pill-btn" id="mute-btn" aria-pressed="false" title="Silenciar la voz de ALYA (Ctrl + M)"><span data-icon="volume"></span><span>Voz</span></button>
+            <button class="pill-btn" id="wake-btn" aria-pressed="false" title="Escucha activa (Ctrl + Shift + 3)"><span data-icon="ear"></span><span>Escucha</span></button>
             <button class="pill-btn" id="new-btn" title="Empezar una conversación nueva"><span data-icon="plus"></span><span>Nueva</span></button>
             <button class="icon-btn" id="settings-btn" title="Configuración"><span data-icon="sliders"></span></button>
             <div class="menu-wrap">
@@ -2485,6 +2503,7 @@
             music: '<path d="M9 18V5l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="15" r="2.5"/>',
             volume: '<path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
             volumeOff: '<path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M22 9.5l-5 5M17 9.5l5 5"/>',
+            ear: '<path d="M6 9a6 6 0 1 1 12 0c0 3-2 4-3 5.5S14 19 12 20.5 8 21 8 19"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-1.5 2-1.5 3"/>',
             sliders: '<path d="M4 6h9M18 6h2M4 12h3M12 12h8M4 18h11M20 18h0"/><circle cx="15.5" cy="6" r="2"/><circle cx="9.5" cy="12" r="2"/><circle cx="17.5" cy="18" r="2"/>',
             dots: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
             star: '<path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 16.9l-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z"/>',
@@ -2567,16 +2586,16 @@
         // estado reflejan lo que está haciendo de verdad.
         //   escuchando > procesando > hablando > escribiendo > error > en línea
         // ============================================================
-        const activity = { recording: false, songListening: false, thinking: 0, speaking: false, writing: 0, errorUntil: 0 };
+        const activity = { recording: false, songListening: false, wakeListening: false, thinking: 0, speaking: false, writing: 0, errorUntil: 0 };
         const stopSpeakBtn = document.getElementById('stop-speak-btn');
 
         function refreshState() {
             let state = 'idle';
             let label = 'En línea';
 
-            if (activity.recording || activity.songListening) {
+            if (activity.recording || activity.songListening || activity.wakeListening) {
                 state = 'listening';
-                label = 'Escuchando…';
+                label = activity.wakeListening ? 'Te escucho…' : 'Escuchando…';
             } else if (activity.thinking > 0) {
                 state = 'thinking';
                 label = 'Procesando…';
@@ -2856,6 +2875,39 @@
                     });
                     box.appendChild(actions);
                 }
+                return box;
+            }
+
+            if (card.type === 'space') {
+                box.appendChild(cardHead('folder', card.title, card.total || ''));
+                card.drives.forEach((drive) => {
+                    box.appendChild(meterRow(drive.name, drive.use, `${drive.free} libres`, diskLevelOf(drive.use)));
+                });
+                if (card.drives.length > 0 && card.items.length > 0) {
+                    box.appendChild(el('div', 'card-sub', 'Lo que se puede limpiar'));
+                }
+                card.items.forEach((item) => {
+                    const row = meterRow(item.name, item.percent, item.size, '');
+                    row.title = `Mostrar en el Explorador: ${item.path}`;
+                    row.style.cursor = 'pointer';
+                    row.addEventListener('click', () => window.alya.showInFolder(item.path));
+                    box.appendChild(row);
+                });
+                return box;
+            }
+
+            if (card.type === 'web') {
+                box.appendChild(cardHead('external', 'Fuentes', `${card.sources.length}`));
+                card.sources.forEach((source) => {
+                    const row = el('button', 'file-row');
+                    row.title = `Abrir en el navegador: ${source.title}`;
+                    row.innerHTML = iconSvg('external');
+                    const info = el('span', 'file-info');
+                    info.appendChild(el('b', '', source.title));
+                    row.appendChild(info);
+                    row.addEventListener('click', () => window.alya.openLink(source.url));
+                    box.appendChild(row);
+                });
                 return box;
             }
 
@@ -3590,6 +3642,7 @@
                 ['Pegar una imagen o un recorte', 'Ctrl + V'],
                 ['Callar a ALYA mientras habla', 'Esc'],
                 ['Silenciar o reactivar la voz', 'Ctrl + M'],
+                ['Encender o apagar la escucha activa', info.wakeShortcut || 'Ctrl + Shift + 3'],
             ].forEach(([label, keys]) => {
                 const row = el('div', 'shortcut');
                 row.appendChild(el('span', '', label));
@@ -4060,6 +4113,62 @@
             refreshState();
         }
 
+        /**
+         * Manda un audio a ALYA y muestra lo que entendió y su respuesta.
+         * handsFree: llegó por la escucha activa; no lleva las imágenes
+         * adjuntas y, si no se entendió nada, no avisa (era ruido).
+         * Devuelve lo que entendió.
+         */
+        async function sendVoiceAudio(base64, mimeType, { handsFree = false } = {}) {
+            // Si había imágenes adjuntas, van junto con lo que dijiste
+            // (ej. adjuntas una captura y preguntas por voz "¿qué es esto?").
+            const images = handsFree ? [] : takePendingImages();
+            const restoreImages = () => {
+                if (handsFree) return;
+                pendingImages = images; // no se mandaron: se devuelven a la fila
+                renderAttachments();
+            };
+
+            const showTranscript = (transcript) =>
+                addMessage('user', transcript, { userImages: images.map((image) => image.previewUrl) });
+
+            // Lo que entendió llega primero (se muestra como mensaje tuyo)
+            // y después la respuesta, que se va escribiendo en vivo.
+            const live = startLiveReply(showTranscript);
+            micBtn.disabled = true;
+            sendBtn.disabled = true;
+            let heard = '';
+
+            try {
+                const { transcript, reply } = await window.alya.sendVoiceMessage(
+                    base64,
+                    mimeType,
+                    toPayload(images),
+                    live.id,
+                    handsFree ? 'wake' : 'manual'
+                );
+                const keepScroll = live.finish();
+                heard = transcript;
+                if (transcript) {
+                    if (!live.transcriptShown) showTranscript(transcript);
+                } else {
+                    restoreImages();
+                }
+                if (transcript || !handsFree) addReply(reply);
+                keepScroll();
+            } catch (err) {
+                live.finish();
+                restoreImages();
+                addMessage('assistant', 'No pude procesar el audio: ' + err.message);
+                flashError();
+            }
+
+            micBtn.disabled = false;
+            sendBtn.disabled = false;
+            refreshConversations();
+            return heard;
+        }
+
         async function startRecording() {
             // Le vas a hablar: si ALYA estaba hablando, se calla (además, la
             // grabación incluye el audio del PC y su voz se colaría en tu mensaje).
@@ -4084,50 +4193,7 @@
                     if (audioChunks.length === 0) return;
 
                     const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-                    const base64 = await blobToBase64(blob);
-
-                    // Si había imágenes adjuntas, van junto con lo que dijiste
-                    // (ej. adjuntas una captura y preguntas por voz "¿qué es esto?").
-                    const images = takePendingImages();
-
-                    const showTranscript = (transcript) =>
-                        addMessage('user', transcript, { userImages: images.map((image) => image.previewUrl) });
-
-                    // Lo que entendió llega primero (se muestra como mensaje tuyo)
-                    // y después la respuesta, que se va escribiendo en vivo.
-                    const live = startLiveReply(showTranscript);
-                    micBtn.disabled = true;
-                    sendBtn.disabled = true;
-
-                    try {
-                        const { transcript, reply } = await window.alya.sendVoiceMessage(
-                            base64,
-                            mediaRecorder.mimeType || 'audio/webm',
-                            toPayload(images),
-                            live.id
-                        );
-                        const keepScroll = live.finish();
-                        if (transcript) {
-                            if (!live.transcriptShown) showTranscript(transcript);
-                        } else {
-                            // No se escuchó nada: las imágenes no se mandaron,
-                            // las devolvemos a la fila para no perderlas.
-                            pendingImages = images;
-                            renderAttachments();
-                        }
-                        addReply(reply);
-                        keepScroll();
-                    } catch (err) {
-                        live.finish();
-                        pendingImages = images; // no se mandaron: se devuelven a la fila
-                        renderAttachments();
-                        addMessage('assistant', 'No pude procesar el audio: ' + err.message);
-                        flashError();
-                    }
-
-                    micBtn.disabled = false;
-                    sendBtn.disabled = false;
-                    refreshConversations();
+                    await sendVoiceAudio(await blobToBase64(blob), mediaRecorder.mimeType || 'audio/webm');
                 });
 
                 mediaRecorder.start();
@@ -4365,6 +4431,413 @@
         refreshState();
         refreshConversations();
         inputEl.focus();
+
+        // ============================================================
+        // Escucha activa ("Oye ALYA"). El micrófono se abre aquí y solo los
+        // tramos con voz se mandan al reconocedor local (wakeEngine.ts),
+        // que corre dentro del PC. Cuando oye la frase, main.ts avisa y se
+        // graba lo que digas hasta que te quedes callado.
+        // ============================================================
+        const wakeBtn = document.getElementById('wake-btn');
+        const WAKE_RATE = 16000;
+        const WAKE_CHUNK = 1600; // 100 ms
+        const WAKE_PREROLL = 5;
+        const WAKE_HANGOVER = 8;
+        const WAKE_HISTORY = 100;
+        const WAKE_PHRASE_ONLY_CHUNKS = 10;
+        const WAKE_NO_SPEECH_MS = 5000;
+        const WAKE_MAX_MS = 15000;
+        const WAKE_IGNORE_AFTER_WAKE_MS = 400;
+        const WAKE_EXIT = /^(muchas )?gracias( alya)?$|^(listo|eso es todo|eso era todo|nada mas|ya esta|adios|chao|hasta luego)( alya)?$/;
+
+        // Recorta y baja a 16 kHz lo que da el micrófono, en bloques de 100 ms.
+        const WAKE_WORKLET = `
+            class WakeTap extends AudioWorkletProcessor {
+                constructor() {
+                    super();
+                    this.ratio = sampleRate / ${WAKE_RATE};
+                    this.pos = 0;
+                    this.out = new Float32Array(${WAKE_CHUNK});
+                    this.filled = 0;
+                }
+                process(inputs) {
+                    const input = inputs[0] && inputs[0][0];
+                    if (!input) return true;
+                    while (this.pos < input.length) {
+                        const i = Math.floor(this.pos);
+                        const next = i + 1 < input.length ? input[i + 1] : input[i];
+                        this.out[this.filled++] = input[i] + (next - input[i]) * (this.pos - i);
+                        if (this.filled === this.out.length) {
+                            this.port.postMessage(this.out);
+                            this.out = new Float32Array(${WAKE_CHUNK});
+                            this.filled = 0;
+                        }
+                        this.pos += this.ratio;
+                    }
+                    this.pos -= input.length;
+                    return true;
+                }
+            }
+            registerProcessor('wake-tap', WakeTap);
+        `;
+
+        const wake = {
+            status: { state: 'off', detail: '', phrase: 'Oye ALYA', silenceMs: 1200, conversationSeconds: 8, sound: true },
+            stream: null,
+            context: null,
+            node: null,
+            opening: false,
+            floor: 0.004,
+            inSpeech: false,
+            quietChunks: 0,
+            chunkCount: 0,
+            segmentStart: 0,
+            firstVoiceIndex: 0,
+            lastVoiceIndex: 0,
+            lastVoiceAt: 0,
+            preroll: [],
+            history: [],
+            capture: null,
+            sending: false,
+            followAllowedUntil: 0,
+            followUntil: 0,
+            quietUntil: 0,
+            muted: false,
+            lastProblem: '',
+        };
+
+        function wakeNormalize(text) {
+            return (text || '')
+                .toLowerCase()
+                .normalize('NFD')
+                .replace(/[̀-ͯ]/g, '')
+                .replace(/[^a-zñ ]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        function wakeIsSpeech(rms) {
+            return rms > Math.max(0.012, wake.floor * 2.5);
+        }
+
+        function wakeCanListen() {
+            return (
+                wake.status.state === 'listening' &&
+                !isRecording &&
+                !activity.songListening &&
+                !activity.speaking &&
+                activity.thinking === 0 &&
+                !wake.sending &&
+                Date.now() >= wake.quietUntil
+            );
+        }
+
+        function wakeResetSpeech() {
+            if (wake.inSpeech) window.alya.wakeFlush();
+            wake.inSpeech = false;
+            wake.quietChunks = 0;
+            wake.preroll = [];
+        }
+
+        function toInt16(samples) {
+            const pcm = new Int16Array(samples.length);
+            for (let i = 0; i < samples.length; i++) {
+                const s = Math.max(-1, Math.min(1, samples[i]));
+                pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            }
+            return pcm;
+        }
+
+        function sendToEngine(pcm) {
+            window.alya.sendWakeAudio(new Uint8Array(pcm.buffer));
+        }
+
+        function onWakeChunk(samples) {
+            let sum = 0;
+            for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+            const rms = Math.sqrt(sum / samples.length);
+            const speech = wakeIsSpeech(rms);
+            const pcm = toInt16(samples);
+
+            wake.history.push(pcm);
+            if (wake.history.length > WAKE_HISTORY) wake.history.shift();
+            wake.chunkCount++;
+            if (!speech) wake.floor = wake.floor * 0.95 + rms * 0.05;
+
+            if (wake.capture) {
+                captureChunk(pcm, speech);
+                return;
+            }
+            if (!wakeCanListen()) {
+                wakeResetSpeech();
+                return;
+            }
+
+            // Justo después de que ALYA contestó, no hace falta volver a llamarla.
+            if (speech && Date.now() < wake.followUntil) {
+                const earlier = wake.preroll.slice();
+                wakeResetSpeech();
+                startCapture(earlier.concat([pcm]), true);
+                return;
+            }
+
+            if (speech) {
+                if (!wake.inSpeech) {
+                    wake.inSpeech = true;
+                    wake.preroll.forEach(sendToEngine);
+                    wake.segmentStart = wake.chunkCount - 1 - wake.preroll.length;
+                    wake.firstVoiceIndex = wake.chunkCount;
+                    wake.preroll = [];
+                }
+                sendToEngine(pcm);
+                wake.lastVoiceIndex = wake.chunkCount;
+                wake.lastVoiceAt = Date.now();
+                wake.quietChunks = 0;
+            } else if (wake.inSpeech) {
+                sendToEngine(pcm);
+                if (++wake.quietChunks >= WAKE_HANGOVER) wakeResetSpeech();
+            } else {
+                wake.preroll.push(pcm);
+                if (wake.preroll.length > WAKE_PREROLL) wake.preroll.shift();
+            }
+        }
+
+        function playWakeChime() {
+            if (!wake.status.sound || !wake.context) return;
+            const ctx = wake.context;
+            const now = ctx.currentTime;
+            [880, 1320].forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                const start = now + i * 0.09;
+                gain.gain.setValueAtTime(0.0001, start);
+                gain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
+                gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.12);
+                osc.connect(gain).connect(ctx.destination);
+                osc.start(start);
+                osc.stop(start + 0.13);
+            });
+        }
+
+        function startCapture(initialChunks, followUp, saidMore = false) {
+            const now = Date.now();
+            wake.capture = {
+                chunks: initialChunks,
+                startedAt: now,
+                lastVoiceAt: saidMore ? wake.lastVoiceAt : now,
+                heardVoice: followUp || saidMore,
+                followUp,
+            };
+            wake.followUntil = 0;
+            wake.followAllowedUntil = 0;
+            activity.wakeListening = true;
+            refreshState();
+        }
+
+        function stopCapture() {
+            wake.capture = null;
+            activity.wakeListening = false;
+            refreshState();
+        }
+
+        function captureChunk(pcm, speech) {
+            const capture = wake.capture;
+            const now = Date.now();
+            if (isRecording || activity.songListening) {
+                stopCapture();
+                return;
+            }
+            capture.chunks.push(pcm);
+
+            if (speech && (capture.followUp || now - capture.startedAt > WAKE_IGNORE_AFTER_WAKE_MS)) {
+                capture.heardVoice = true;
+                capture.lastVoiceAt = now;
+            }
+
+            if (!capture.heardVoice && now - capture.startedAt > WAKE_NO_SPEECH_MS) {
+                stopCapture();
+            } else if (
+                (capture.heardVoice && now - capture.lastVoiceAt >= wake.status.silenceMs) ||
+                now - capture.startedAt > WAKE_MAX_MS
+            ) {
+                const chunks = capture.chunks;
+                stopCapture();
+                sendWakeCapture(chunks);
+            }
+        }
+
+        window.alya.onWakeDetected(() => {
+            if (wake.capture || !wakeCanListen()) return;
+            // Desde que empezaste a hablar, para no cortar "Oye ALYA, abre Spotify".
+            // El aviso puede llegar cuando ya terminaste la frase completa; si
+            // hablaste bastante más que la sola frase, eso ya era el pedido.
+            const take = Math.min(WAKE_HISTORY, wake.chunkCount - wake.segmentStart);
+            const earlier = wake.history.slice(-take);
+            const saidMore = wake.lastVoiceIndex - wake.firstVoiceIndex + 1 > WAKE_PHRASE_ONLY_CHUNKS;
+            wakeResetSpeech();
+            playWakeChime();
+            startCapture(earlier, false, saidMore);
+        });
+
+        function pcmToWavBase64(chunks) {
+            const samples = chunks.reduce((total, chunk) => total + chunk.length, 0);
+            const buffer = new ArrayBuffer(44 + samples * 2);
+            const view = new DataView(buffer);
+            const text = (offset, value) => {
+                for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+            };
+            text(0, 'RIFF');
+            view.setUint32(4, 36 + samples * 2, true);
+            text(8, 'WAVE');
+            text(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, WAKE_RATE, true);
+            view.setUint32(28, WAKE_RATE * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            text(36, 'data');
+            view.setUint32(40, samples * 2, true);
+            let offset = 44;
+            chunks.forEach((chunk) => {
+                new Int16Array(buffer, offset, chunk.length).set(chunk);
+                offset += chunk.length * 2;
+            });
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i += 0x8000) {
+                binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            }
+            return btoa(binary);
+        }
+
+        async function sendWakeCapture(chunks) {
+            wake.sending = true;
+            try {
+                const transcript = await sendVoiceAudio(pcmToWavBase64(chunks), 'audio/wav', { handsFree: true });
+                // Si te despediste ("gracias", "listo"...), no se queda esperando más.
+                if (transcript && !WAKE_EXIT.test(wakeNormalize(transcript))) {
+                    wake.followAllowedUntil = Date.now() + 60000;
+                }
+            } finally {
+                wake.sending = false;
+                wake.quietUntil = Date.now() + 700;
+            }
+            if (!activity.speaking) openFollowWindow();
+        }
+
+        function openFollowWindow() {
+            if (Date.now() > wake.followAllowedUntil) return;
+            const seconds = wake.status.conversationSeconds;
+            wake.followUntil = seconds > 0 ? Date.now() + 700 + seconds * 1000 : 0;
+        }
+
+        window.alya.onSpeaking((speaking) => {
+            if (speaking) {
+                wake.followUntil = 0;
+                return;
+            }
+            // Que su propia voz no la despierte.
+            wake.quietUntil = Date.now() + 700;
+            if (!wake.sending) openFollowWindow();
+        });
+
+        async function openWakeMic() {
+            if (wake.stream || wake.opening) return;
+            wake.opening = true;
+            let stream = null;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                });
+                if (wake.status.state !== 'listening') {
+                    stopStream(stream);
+                    return;
+                }
+                const context = new AudioContext();
+                context.resume().catch(() => { });
+                const url = URL.createObjectURL(new Blob([WAKE_WORKLET], { type: 'application/javascript' }));
+                try {
+                    await context.audioWorklet.addModule(url);
+                } finally {
+                    URL.revokeObjectURL(url);
+                }
+                const node = new AudioWorkletNode(context, 'wake-tap');
+                node.port.onmessage = (event) => onWakeChunk(event.data);
+                context.createMediaStreamSource(stream).connect(node);
+                wake.stream = stream;
+                wake.context = context;
+                wake.node = node;
+                wake.floor = 0.004;
+                wake.history = [];
+            } catch (err) {
+                stopStream(stream);
+                console.warn('No se pudo abrir el micrófono para la escucha activa:', err.message);
+                addMessage(
+                    'assistant',
+                    'No pude usar el micrófono para escucharte. Revisa que Windows le dé permiso a ALYA en ' +
+                    'Configuración → Privacidad → Micrófono. Dejé la escucha activa apagada.'
+                );
+                window.alya.setWakeEnabled(false).then(renderWake).catch(() => { });
+            } finally {
+                wake.opening = false;
+            }
+        }
+
+        function closeWakeMic() {
+            if (wake.capture) stopCapture();
+            wakeResetSpeech();
+            if (wake.node) wake.node.port.onmessage = null;
+            stopStream(wake.stream);
+            if (wake.context) wake.context.close().catch(() => { });
+            wake.stream = null;
+            wake.context = null;
+            wake.node = null;
+            wake.history = [];
+            wake.followUntil = 0;
+        }
+
+        function renderWake(status) {
+            if (!status) return;
+            wake.status = status;
+            const { state, detail } = status;
+
+            wakeBtn.classList.toggle('wake-on', state === 'listening' || state === 'loading');
+            wakeBtn.classList.toggle('wake-paused', state === 'paused');
+            wakeBtn.classList.toggle('wake-error', state === 'unavailable');
+            wakeBtn.setAttribute('aria-pressed', String(state !== 'off'));
+            wakeBtn.title =
+                state === 'off'
+                    ? `Escucha activa apagada: pulsa para que ALYA te responda cuando digas "${status.phrase}" (Ctrl + Shift + 3)`
+                    : state === 'listening'
+                        ? `Escuchando: di "${status.phrase}" y lo que necesites. Pulsa para apagar (Ctrl + Shift + 3)`
+                        : `${detail} Pulsa para apagar (Ctrl + Shift + 3)`;
+
+            if (state === 'unavailable' && detail !== wake.lastProblem) {
+                addMessage('assistant', `No pude activar la escucha activa. ${detail}`);
+            }
+            wake.lastProblem = state === 'unavailable' ? detail : '';
+
+            if (state === 'listening') openWakeMic();
+            else closeWakeMic();
+        }
+
+        wakeBtn.addEventListener('click', async () => {
+            wakeBtn.disabled = true;
+            try {
+                renderWake(await window.alya.setWakeEnabled(wake.status.state === 'off'));
+            } catch (err) {
+                console.error('No se pudo cambiar la escucha activa:', err);
+            } finally {
+                wakeBtn.disabled = false;
+            }
+        });
+
+        window.alya.onWakeState(renderWake);
+        window.alya.getWakeStatus().then(renderWake).catch(() => { });
     </script>
 </body>
 

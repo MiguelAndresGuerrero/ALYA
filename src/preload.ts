@@ -5,6 +5,7 @@ import type { Project } from './projectsStore';
 import type { SongMatch } from './songid';
 import type { Guide } from './guides';
 import type { Conversation, ConversationSummary } from './conversationsStore';
+import type { WakeStatus } from './wakeWord';
 
 contextBridge.exposeInMainWorld('alya', {
   getStatus: (): Promise<SystemStatus> => ipcRenderer.invoke('alya:getStatus'),
@@ -55,9 +56,23 @@ contextBridge.exposeInMainWorld('alya', {
     audioBase64: string,
     mimeType: string,
     images?: ChatImage[],
-    streamId?: string
+    streamId?: string,
+    origin?: 'wake' | 'manual'
   ): Promise<{ transcript: string; reply: ChatMessage }> =>
-    ipcRenderer.invoke('alya:sendVoiceMessage', audioBase64, mimeType, images ?? [], streamId),
+    ipcRenderer.invoke('alya:sendVoiceMessage', audioBase64, mimeType, images ?? [], streamId, origin ?? 'manual'),
+
+  // Escucha activa ("Oye ALYA")
+  getWakeStatus: (): Promise<WakeStatus> => ipcRenderer.invoke('alya:getWakeStatus'),
+  setWakeEnabled: (enabled: boolean): Promise<WakeStatus> => ipcRenderer.invoke('alya:setWakeEnabled', enabled),
+  onWakeState: (callback: (status: WakeStatus) => void): void => {
+    ipcRenderer.on('alya:wakeState', (_event, status: WakeStatus) => callback(status));
+  },
+  onWakeDetected: (callback: () => void): void => {
+    ipcRenderer.on('alya:wakeDetected', () => callback());
+  },
+  // Audio del micrófono (PCM 16 kHz) para el detector, que corre dentro del PC.
+  sendWakeAudio: (chunk: Uint8Array): void => ipcRenderer.send('alya:wakeAudio', chunk),
+  wakeFlush: (): void => ipcRenderer.send('alya:wakeFlush'),
   onTriggerVoice: (callback: () => void): void => {
     ipcRenderer.on('alya:trigger-voice', () => callback());
   },
@@ -88,7 +103,7 @@ contextBridge.exposeInMainWorld('alya', {
   // Menú propio de la ventana de chat
   openSettings: (): Promise<void> => ipcRenderer.invoke('alya:openSettings'),
   openStatus: (): Promise<void> => ipcRenderer.invoke('alya:openStatus'),
-  getAppInfo: (): Promise<{ version: string; userName: string; voiceShortcut: string; screenShortcut: string }> =>
+  getAppInfo: (): Promise<{ version: string; userName: string; voiceShortcut: string; screenShortcut: string; wakeShortcut: string }> =>
     ipcRenderer.invoke('alya:getAppInfo'),
   quit: (): Promise<void> => ipcRenderer.invoke('alya:quit'),
 

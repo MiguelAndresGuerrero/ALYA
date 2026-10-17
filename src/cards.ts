@@ -127,6 +127,55 @@ export function buildCard(tool: string, args: Record<string, unknown>, result: u
             };
         }
 
+        case 'buscar_en_internet': {
+            const sources = Array.isArray(data.fuentes) ? data.fuentes : [];
+            const links = sources
+                .map((source) => asRecord(source))
+                .filter((source): source is Record<string, unknown> => source !== null)
+                .map((source) => ({ title: String(source.titulo ?? '').trim(), url: String(source.url ?? '') }))
+                .filter((source) => source.title && /^https:\/\//i.test(source.url));
+            if (data.ok !== true || links.length === 0) return null;
+            return { type: 'web', query: String(args.consulta ?? ''), sources: links };
+        }
+
+        case 'analizar_espacio': {
+            if (data.ok !== true) return null;
+            const listed = Array.isArray(data.contenido) ? data.contenido : Array.isArray(data.lugares_que_se_pueden_limpiar) ? data.lugares_que_se_pueden_limpiar : [];
+            const rows = listed
+                .map((item) => asRecord(item))
+                .filter((item): item is Record<string, unknown> => item !== null)
+                .map((item) => ({
+                    name: String(item.nombre ?? ''),
+                    path: String(item.ruta ?? ''),
+                    size: String(item.tamano ?? ''),
+                    bytes: typeof item.bytes === 'number' ? item.bytes : 0,
+                }))
+                .filter((item) => item.name && item.bytes > 0)
+                .slice(0, 8);
+            const reference = typeof data.total_bytes === 'number' && data.total_bytes > 0 ? data.total_bytes : Math.max(1, ...rows.map((row) => row.bytes));
+            const drives = (Array.isArray(data.discos) ? data.discos : [])
+                .map((drive) => asRecord(drive))
+                .filter((drive): drive is Record<string, unknown> => drive !== null)
+                .map((drive) => ({
+                    name: String(drive.disco ?? ''),
+                    use: toPercent(drive.usado_porcentaje) ?? 0,
+                    free: String(drive.libre ?? ''),
+                }));
+            if (rows.length === 0 && drives.length === 0) return null;
+            return {
+                type: 'space',
+                title: data.carpeta ? String(data.carpeta) : 'Espacio en disco',
+                total: data.total ? String(data.total) : null,
+                drives,
+                items: rows.map((row) => ({
+                    name: row.name,
+                    path: row.path,
+                    size: row.size,
+                    percent: Math.max(0, Math.min(100, Math.round((row.bytes / reference) * 100))),
+                })),
+            };
+        }
+
         case 'guardar_en_spotify': {
             const title = String(data.cancion ?? '').trim();
             const status = String(data.estado ?? '');

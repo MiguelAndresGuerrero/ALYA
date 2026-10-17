@@ -13,6 +13,7 @@ import { openApp, closeApp } from './appLauncher';
 import { getStatus } from './systemTools';
 import { generateImage } from './imageGen';
 import { openFolder, searchFiles, getHiddenSensitiveCount } from './fileTools';
+import { analyzeFolder, spaceOverview } from './diskSpace';
 import { redactDeep, redactSecrets } from './secrets';
 import { getGuide, GUIDE_IDS } from './guides';
 import { sendMediaKey, MediaAction } from './mediaControl';
@@ -520,7 +521,8 @@ const buscarInternetDeclaration: FunctionDeclaration = {
         'Busca información actual en internet. Úsala cuando Andrés pregunte algo que no sabes ' +
         'con certeza, que requiere información reciente/de hoy (noticias, precios, resultados, ' +
         'clima, versiones de software, eventos actuales), o cuando explícitamente pida que ' +
-        'busques algo.',
+        'busques algo. Devuelve un resumen y sus fuentes; las fuentes ya se muestran como ' +
+        'enlaces en el chat, así que no leas direcciones web en tu respuesta.',
     parametersJsonSchema: {
         type: 'object',
         properties: {
@@ -1036,6 +1038,27 @@ const listarCarpetaDeclaration: FunctionDeclaration = {
     },
 };
 
+const analizarEspacioDeclaration: FunctionDeclaration = {
+    name: 'analizar_espacio',
+    description:
+        'Revisa qué está ocupando espacio en el disco. Sin ruta: cuánto queda libre en cada disco y ' +
+        'cuánto ocupan los lugares que normalmente se pueden limpiar (temporales, descargas, papelera, ' +
+        'cachés), cada uno con su consejo. Con ruta (o "descargas", "documentos", "C:\\"): mide cada ' +
+        'subcarpeta y busca los archivos más pesados. Solo mide, no borra nada. Para investigar más, ' +
+        'llama de nuevo con la subcarpeta más grande. Recomienda borrar solo lo que diga el consejo; ' +
+        'si lo pesado es un juego o programa, sugiere desinstalarlo desde Configuración de Windows, ' +
+        'nunca borrar su carpeta. Puede tardar unos segundos.',
+    parametersJsonSchema: {
+        type: 'object',
+        properties: {
+            ruta: {
+                type: 'string',
+                description: 'Carpeta a revisar. Vacío para el resumen general.',
+            },
+        },
+    },
+};
+
 const ejecutarComandoDeclaration: FunctionDeclaration = {
     name: 'ejecutar_comando',
     description:
@@ -1141,6 +1164,7 @@ const tools = [
             leerArchivoDeclaration,
             escribirArchivoDeclaration,
             listarCarpetaDeclaration,
+            analizarEspacioDeclaration,
             ejecutarComandoDeclaration,
             eliminarArchivoDeclaration,
             editarArchivoDeclaration,
@@ -1206,6 +1230,23 @@ const CONFIRMATION_REQUIRED_TOOLS = new Set<string>([
     'editar_archivo',
 ]);
 
+// Lo que llega con "Oye ALYA" (o en la conversación que sigue) no se sabe
+// con certeza quién lo dijo: puede ser otra persona, un video o el stream.
+// Por eso estas acciones, que leen tus archivos o cambian lo que ALYA
+// recuerda, piden confirmación en pantalla cuando se piden así.
+const HANDS_FREE_CONFIRMATION_TOOLS = new Set<string>([
+    'leer_archivo',
+    'listar_carpeta',
+    'analizar_espacio',
+    'recordar',
+    'olvidar',
+    'crear_rutina',
+    'borrar_rutina',
+    'actualizar_proyecto',
+    'borrar_proyecto',
+    'conectar_spotify',
+]);
+
 /**
  * Genera una descripción legible de lo que se va a hacer, para mostrar en
  * el botón de confirmación.
@@ -1222,6 +1263,28 @@ function describeAction(name: string, args: Record<string, unknown>): string {
             return `Borrar "${args.ruta}" — se manda a la Papelera de reciclaje (se puede recuperar desde ahí).`;
         case 'editar_archivo':
             return `Editar "${args.ruta}" — reemplazar un fragmento específico de texto.`;
+        case 'leer_archivo':
+            return `Leer el archivo "${args.ruta}" (lo pidieron por voz).`;
+        case 'listar_carpeta':
+            return `Ver qué hay en la carpeta "${args.ruta}" (lo pidieron por voz).`;
+        case 'analizar_espacio':
+            return args.ruta
+                ? `Revisar qué ocupa espacio en "${args.ruta}" (lo pidieron por voz).`
+                : 'Revisar el espacio de tus discos (lo pidieron por voz).';
+        case 'recordar':
+            return `Guardar en la memoria de ALYA: "${args.dato}" (lo pidieron por voz).`;
+        case 'olvidar':
+            return `Borrar de la memoria de ALYA lo que coincida con "${args.texto}" (lo pidieron por voz).`;
+        case 'crear_rutina':
+            return `Crear la rutina "${args.nombre}" (lo pidieron por voz).`;
+        case 'borrar_rutina':
+            return `Borrar la rutina "${args.nombre}" (lo pidieron por voz).`;
+        case 'actualizar_proyecto':
+            return `Actualizar el proyecto "${args.nombre}" (lo pidieron por voz).`;
+        case 'borrar_proyecto':
+            return `Borrar el proyecto "${args.nombre}" (lo pidieron por voz).`;
+        case 'conectar_spotify':
+            return 'Conectar tu cuenta de Spotify (lo pidieron por voz).';
         default:
             return `Ejecutar "${name}"`;
     }
@@ -1376,10 +1439,11 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
         }
 
         case 'buscar_en_internet': {
-            const consulta = String(args.consulta ?? '');
+            const consulta = String(args.consulta ?? '').trim().slice(0, 300);
+            if (!consulta) return { result: { ok: false, error: 'No hay nada que buscar.' } };
             try {
-                const resultado = await searchWeb(consulta);
-                return { result: { ok: true, resultado } };
+                const { resumen, fuentes } = await searchWeb(consulta);
+                return { result: { ok: true, resultado: resumen, fuentes } };
             } catch (err) {
                 return { result: { ok: false, error: (err as Error).message } };
             }
@@ -1531,6 +1595,16 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
             try {
                 const entradas = listDirectory(ruta);
                 return { result: { ok: true, entradas } };
+            } catch (err) {
+                return { result: { ok: false, error: (err as Error).message } };
+            }
+        }
+
+        case 'analizar_espacio': {
+            const ruta = typeof args.ruta === 'string' ? args.ruta.trim() : '';
+            try {
+                const resultado = ruta ? await analyzeFolder(ruta) : await spaceOverview();
+                return { result: { ok: true, ...resultado } };
             } catch (err) {
                 return { result: { ok: false, error: (err as Error).message } };
             }
@@ -1933,43 +2007,48 @@ async function describeScreen(question?: string): Promise<string> {
     return (response.text ?? '').trim();
 }
 
+const MAX_WEB_SOURCES = 5;
+
 /**
  * Busca en internet usando la búsqueda de Google integrada de Gemini
  * (grounding). Es una llamada "de un solo uso" separada de la conversación
- * principal, porque Gemini no permite mezclar la herramienta de búsqueda
- * con nuestras otras herramientas (function calling) en la misma petición.
+ * principal: así la búsqueda solo se usa (y solo gasta cupo) cuando hace
+ * falta, y funciona igual con todos los modelos de respaldo.
+ * Devuelve el resumen y las páginas de donde salió, para mostrarlas como enlaces.
  */
-async function searchWeb(query: string): Promise<string> {
+async function searchWeb(query: string): Promise<{ resumen: string; fuentes: Array<{ titulo: string; url: string }> }> {
     const client = getClient();
+    // Si en la consulta se coló una clave, se tacha antes de mandarla al buscador.
+    const safeQuery = redactSecrets(query);
+    const today = new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
     const response = await withModels((model) =>
         client.models.generateContent({
             model,
             contents:
-                `Busca información actual sobre esto y responde en español, de forma breve ` +
-                `y natural (como en una conversación hablada): ${query}`,
+                `Hoy es ${today}. Busca en internet información actual sobre esto: ${safeQuery}\n\n` +
+                `Responde en español, breve y natural (como en una conversación hablada), solo con lo ` +
+                `que encontraste en la búsqueda. Si los resultados no lo responden o se contradicen, ` +
+                `dilo en vez de adivinar. Si el dato tiene fecha (un resultado, un precio, una noticia), ` +
+                `menciónala. No escribas enlaces.`,
             config: {
                 tools: [{ googleSearch: {} }],
             },
         })
     );
 
-    let text = (response.text ?? '').trim();
+    const resumen = (response.text ?? '').trim();
 
-    // Agregar 1-2 fuentes si Gemini las trae, para que Andrés pueda
-    // verificar si quiere (sin saturar la respuesta hablada con links).
-    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-    if (chunks && chunks.length > 0) {
-        const sources = chunks
-            .slice(0, 2)
-            .map((c) => c.web?.title)
-            .filter(Boolean);
-        if (sources.length > 0) {
-            text += `\n\nFuentes: ${sources.join(', ')}`;
-        }
+    const fuentes: Array<{ titulo: string; url: string }> = [];
+    for (const chunk of response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? []) {
+        const titulo = chunk.web?.title?.trim();
+        const url = chunk.web?.uri ?? '';
+        if (!titulo || !/^https:\/\//i.test(url) || fuentes.some((f) => f.titulo === titulo)) continue;
+        fuentes.push({ titulo, url });
+        if (fuentes.length === MAX_WEB_SOURCES) break;
     }
 
-    return text;
+    return { resumen, fuentes };
 }
 
 const MAX_TOOL_ITERATIONS = 8; // seguro contra loops infinitos de herramientas (8 da margen para tareas de varios pasos)
@@ -2586,14 +2665,20 @@ function previewStreamedText(raw: string): { text: string; mood: Mood | undefine
     return { text: clean && lastWordComplete ? `${clean} ` : clean, mood };
 }
 
+export interface SendOptions {
+    /** El mensaje llegó por voz sin tocar nada ("Oye ALYA" o la conversación que sigue). */
+    handsFree?: boolean;
+}
+
 export async function sendMessage(
     userMessage: string,
     images: ChatImage[] = [],
-    handlers: ReplyStreamHandlers = {}
+    handlers: ReplyStreamHandlers = {},
+    options: SendOptions = {}
 ): Promise<ChatMessage> {
     noticeListener = handlers.onNotice ?? null;
     try {
-        return await answerMessage(userMessage, images, handlers);
+        return await answerMessage(userMessage, images, handlers, options);
     } finally {
         noticeListener = null;
     }
@@ -2606,7 +2691,8 @@ const MAX_WRITTEN_CALL_RETRIES = 2;
 async function answerMessage(
     userMessage: string,
     images: ChatImage[],
-    handlers: ReplyStreamHandlers
+    handlers: ReplyStreamHandlers,
+    options: SendOptions
 ): Promise<ChatMessage> {
     const chat = getChatSession();
     const settings = loadSettings();
@@ -2710,7 +2796,9 @@ async function answerMessage(
             const args = (call.args ?? {}) as Record<string, unknown>;
 
             // --- Herramienta sensible: pausar y pedir confirmación ---
-            if (CONFIRMATION_REQUIRED_TOOLS.has(name)) {
+            const needsConfirmation =
+                CONFIRMATION_REQUIRED_TOOLS.has(name) || (options.handsFree === true && HANDS_FREE_CONFIRMATION_TOOLS.has(name));
+            if (needsConfirmation) {
                 const confirmation: PendingConfirmation = {
                     id: randomUUID(),
                     tool: name,

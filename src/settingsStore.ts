@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
 import type { ThinkingMode } from './thinking';
+import type { WakeSensitivity } from './wakeMatch';
 
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'configuracion.json');
 
@@ -16,6 +17,14 @@ export interface AlyaSettings {
     volume: number; // volumen de la voz, 0-100
     muted: boolean; // voz silenciada con el botón del chat (se recuerda entre sesiones)
     voiceInterrupt: boolean; // ALYA se calla si te escucha hablar mientras ella habla (pensado para audífonos)
+    wakeEnabled: boolean; // escucha activa: se despierta al oír una de las frases
+    wakePhrases: string; // frases para despertarla, separadas por coma
+    wakeSensitivity: WakeSensitivity;
+    wakeSilenceMs: number; // pausa que da por terminada tu frase
+    wakeConversationSeconds: number; // cuánto sigue escuchando después de responder (0 = nada)
+    wakeSound: boolean; // tono corto al despertarse
+    wakeShowWindow: boolean; // muestra la ventana del chat al llamarla
+    wakePauseWhileObs: boolean;
 }
 
 const DEFAULT_SETTINGS: AlyaSettings = {
@@ -29,6 +38,14 @@ const DEFAULT_SETTINGS: AlyaSettings = {
     volume: 100,
     muted: false,
     voiceInterrupt: false,
+    wakeEnabled: false,
+    wakePhrases: 'oye alya, hola alya',
+    wakeSensitivity: 'normal',
+    wakeSilenceMs: 1200,
+    wakeConversationSeconds: 8,
+    wakeSound: true,
+    wakeShowWindow: false,
+    wakePauseWhileObs: false,
 };
 
 export function loadSettings(): AlyaSettings {

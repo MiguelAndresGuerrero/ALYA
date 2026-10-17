@@ -35,6 +35,19 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
     {
+        version: '1.0.9',
+        date: 'Octubre de 2026',
+        items: [
+            'Escucha activa: di "Oye ALYA" y te responde sin tocar nada; después sigue escuchando unos segundos para conversar.',
+            'Todo el reconocimiento de la frase ocurre en tu PC; nada sale a internet hasta que la llamas.',
+            'Lo pedido por voz que lee tus archivos o cambia su memoria pide confirmación en pantalla.',
+            'Frases, sensibilidad, pausas y comportamiento se ajustan en Configuración; Ctrl+Shift+3 la enciende o apaga.',
+            'Seguridad: las confirmaciones viejas ya no aprueban otra acción, y abrir apps o carpetas no pasa por la consola.',
+            'Búsqueda en internet con fuentes: la respuesta trae la fecha del dato y debajo los enlaces de dónde salió.',
+            'Espacio en disco: pregúntale qué está ocupando espacio y te muestra las carpetas y archivos más pesados y qué se puede limpiar.',
+        ],
+    },
+    {
         version: '1.0.8',
         date: 'Octubre de 2026',
         items: [
@@ -107,6 +120,7 @@ export const PRIVACY: InfoSection[] = [
             'Lo que escribes o dices, las imágenes que adjuntas y, cuando le pides ver tu pantalla, una captura de ese momento.',
             'Lo que ALYA recuerda de ti y un resumen de cómo la usas, para que pueda adaptarse.',
             'El resultado de las acciones que hace por ti (por ejemplo, los nombres de los archivos que encontró).',
+            'Cuando busca en internet, lo que pediste buscar (la búsqueda la hace Google por medio de Gemini).',
             'Se usa tu propia clave de Gemini: aplican las condiciones de Google para esa clave.',
         ],
     },
@@ -116,7 +130,6 @@ export const PRIVACY: InfoSection[] = [
             'AudD: unos segundos del audio que suena, cuando pides identificar una canción.',
             'Spotify: las búsquedas y órdenes de reproducción, con tu cuenta.',
             'Pollinations: la descripción de la imagen, cuando le pides generar una.',
-            'Kick, Twitch y YouTube: se lee el chat en vivo del canal que configures.',
             'GitHub: se consulta si hay una versión nueva de ALYA.',
         ],
     },

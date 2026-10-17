@@ -62,6 +62,14 @@ export type ChatCard =
   | { type: 'app'; name: string; ok: boolean; detail: string }
   | { type: 'files'; query: string; total: number; files: Array<{ name: string; path: string }> }
   | { type: 'song'; title: string; artist: string; album: string | null; source: string; label?: string }
+  | { type: 'web'; query: string; sources: Array<{ title: string; url: string }> }
+  | {
+      type: 'space';
+      title: string;
+      total: string | null;
+      drives: Array<{ name: string; use: number; free: string }>;
+      items: Array<{ name: string; path: string; size: string; percent: number }>;
+    }
   | {
       type: 'guide';
       title: string;

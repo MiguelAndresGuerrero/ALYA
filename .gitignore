@@ -5,6 +5,7 @@ node_modules/
 out/
 dist/
 piper/
+vosk/
 *.log
 *.tsbuildinfo
 

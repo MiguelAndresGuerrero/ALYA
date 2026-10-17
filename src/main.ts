@@ -193,10 +193,17 @@ import { identifySong, type SongMatch } from './songid';
 import { recognizeSong, describeRecognition, setAudioListener, type ListenResult } from './songRecognition';
 import { startReminderScheduler } from './reminders';
 import { loadSettings, saveSettings, type AlyaSettings } from './settingsStore';
-import { startKickChatListener } from './kickChat';
-import { startTwitchChatListener } from './twitchChat';
-import { startYouTubeChatListener } from './youtubeChat';
-import { queueOrPlaySong, initializePlayerSession } from './webBrowser';
+import {
+  configureWake,
+  feedWakeAudio,
+  flushWakeAudio,
+  getWakeStatus,
+  setWakeHandler,
+  setWakeStatusListener,
+  shutdownWake,
+  type WakeStatus,
+} from './wakeWord';
+import { initializePlayerSession } from './webBrowser';
 import { startOverlayServer } from './obsOverlay';
 import { loadProjects, type Project } from './projectsStore';
 import { getResourcePath } from './resourcePaths';
@@ -387,6 +394,9 @@ function createChatWindow(): void {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
+      // La escucha activa procesa el micrófono con la ventana oculta: sin
+      // esto Chromium la frena y la frase se pierde.
+      backgroundThrottling: false,
     },
   });
 
@@ -541,17 +551,50 @@ function createTray(): void {
 
   tray = new Tray(image);
   tray.setToolTip('ALYA');
+  refreshTrayMenu();
+  tray.on('click', toggleChatWindow);
+}
 
+function refreshTrayMenu(): void {
+  if (!tray) return;
+  const wake = getWakeStatus();
   const menu = Menu.buildFromTemplate([
     { label: 'Hablar con ALYA', click: toggleChatWindow },
+    {
+      label: 'Escucha activa ("Oye ALYA")',
+      type: 'checkbox',
+      checked: wake.state !== 'off',
+      click: () => setWakeEnabled(wake.state === 'off'),
+    },
     { label: 'Ver estado del sistema', click: toggleStatusWindow },
     { label: 'Configuración', click: toggleSettingsWindow },
     { type: 'separator' },
     { label: 'Salir', click: () => app.exit(0) },
   ]);
-
   tray.setContextMenu(menu);
-  tray.on('click', toggleChatWindow);
+}
+
+// --- Escucha activa ("Oye ALYA") ---
+function setWakeEnabled(enabled: boolean): WakeStatus {
+  saveSettings({ ...loadSettings(), wakeEnabled: enabled });
+  configureWake();
+  if (enabled) void getLoadedChatWindow(); // la ventana (aunque esté oculta) es la que escucha el micrófono
+  return getWakeStatus();
+}
+
+function onWakeStatusChange(status: WakeStatus): void {
+  if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('alya:wakeState', status);
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('alya:wakeState', status);
+  refreshTrayMenu();
+}
+
+async function onWakeDetected(): Promise<void> {
+  const win = await getLoadedChatWindow();
+  if (loadSettings().wakeShowWindow) {
+    win.show();
+    win.focus();
+  }
+  win.webContents.send('alya:wakeDetected');
 }
 
 /**
@@ -615,7 +658,12 @@ if (!gotSingleInstanceLock) {
       if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('alya:voicePlaying');
     });
 
+    setWakeStatusListener(onWakeStatusChange);
+    setWakeHandler(() => void onWakeDetected());
+
     createTray();
+    configureWake();
+    if (loadSettings().wakeEnabled) void getLoadedChatWindow();
     await ensureAutoLaunch();
     startVoiceServer(); // arranca el proceso de voz persistente antes del saludo
     greet();
@@ -645,45 +693,6 @@ if (!gotSingleInstanceLock) {
       notify('Recordatorio', reminder.mensaje);
       speak(reminder.mensaje, undefined, { force: true }); // suena aunque la voz esté silenciada
     });
-
-    // Reacción a "!play <canción>" en el chat en vivo — misma lógica sin
-    // importar de qué plataforma venga. Ya no hay fila real (YouTube abre
-    // en el navegador real, fuera del control de ALYA) — cada pedido
-    // simplemente abre su propia pestaña.
-    async function handlePlayCommand(query: string, username: string, plataforma: string): Promise<void> {
-      console.log(`[${plataforma}] ${username} pidió: ${query}`);
-      try {
-        await queueOrPlaySong(query);
-        speak(`Abriendo "${query}", pedida por ${username}.`);
-      } catch {
-        speak(`No logré encontrar "${query}", pedida por ${username}.`);
-      }
-    }
-
-    // Kick: solo necesita el chatroom_id (número público de tu canal).
-    const kickChatroomId = process.env.KICK_CHATROOM_ID;
-    if (kickChatroomId) {
-      startKickChatListener(kickChatroomId, (query, username) =>
-        handlePlayCommand(query, username, 'Kick')
-      );
-    }
-
-    // Twitch: solo necesita tu nombre de canal — lectura anónima, sin cuenta ni token.
-    const twitchChannel = process.env.TWITCH_CHANNEL;
-    if (twitchChannel) {
-      startTwitchChatListener(twitchChannel, (query, username) =>
-        handlePlayCommand(query, username, 'Twitch')
-      );
-    }
-
-    // YouTube: necesita tu channel_id y una API key de Google Cloud (gratis).
-    const youtubeChannelId = process.env.YOUTUBE_CHANNEL_ID;
-    const youtubeApiKey = process.env.YOUTUBE_API_KEY;
-    if (youtubeChannelId && youtubeApiKey) {
-      startYouTubeChatListener(youtubeChannelId, youtubeApiKey, (query, username) =>
-        handlePlayCommand(query, username, 'YouTube')
-      );
-    }
 
     // Autorizar micrófono Y captura de pantalla/audio del sistema. Sin
     // esto, Electron bloquea getUserMedia/getDisplayMedia en silencio
@@ -721,6 +730,20 @@ if (!gotSingleInstanceLock) {
         `No se pudo registrar el atajo ${SCREEN_SHORTCUT} — probablemente otro programa ya lo está usando.`
       );
     }
+
+    // Y el que enciende o apaga la escucha activa, con aviso para saber cómo quedó.
+    const wakeRegistered = globalShortcut.register(WAKE_SHORTCUT, () => {
+      const status = setWakeEnabled(getWakeStatus().state === 'off');
+      notify(
+        status.state === 'off' ? 'Escucha activa apagada' : 'Escucha activa encendida',
+        status.state === 'off' ? 'Ya no te escucho hasta que la vuelvas a encender.' : 'Llámame con "Oye ALYA".'
+      );
+    });
+    if (!wakeRegistered) {
+      console.warn(
+        `No se pudo registrar el atajo ${WAKE_SHORTCUT} — probablemente otro programa ya lo está usando.`
+      );
+    }
   });
 
   app.on('will-quit', () => {
@@ -729,6 +752,7 @@ if (!gotSingleInstanceLock) {
 
   app.on('before-quit', () => {
     stopVoiceServer();
+    shutdownWake();
   });
 }
 
@@ -777,6 +801,7 @@ ipcMain.handle('alya:getProjects', async (): Promise<Project[]> => {
 // mensaje, y con un tope de tamaño por imagen.
 const MAX_CHAT_IMAGES = 4;
 const SCREEN_SHORTCUT = 'CommandOrControl+Shift+2';
+const WAKE_SHORTCUT = 'CommandOrControl+Shift+3';
 const MAX_IMAGE_BASE64_LENGTH = 8 * 1024 * 1024; // ~6 MB de imagen real
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
@@ -949,7 +974,16 @@ ipcMain.handle('alya:saveSettings', async (_event, settings: AlyaSettings): Prom
   // Sesión nueva con el modelo (para que tome los ajustes), pero sin
   // perder el hilo de la conversación que está abierta.
   reloadChatContext();
+  configureWake();
+  if (loadSettings().wakeEnabled) void getLoadedChatWindow();
 });
+
+ipcMain.handle('alya:getWakeStatus', async (): Promise<WakeStatus> => getWakeStatus());
+ipcMain.handle('alya:setWakeEnabled', async (_event, enabled: unknown): Promise<WakeStatus> =>
+  setWakeEnabled(enabled === true)
+);
+ipcMain.on('alya:wakeAudio', (_event, chunk: unknown) => feedWakeAudio(chunk));
+ipcMain.on('alya:wakeFlush', () => flushWakeAudio());
 
 // Credenciales de Spotify: se guardan en el .env (no en configuracion.json,
 // porque spotify.ts las lee de process.env, igual que el resto de keys) y
@@ -1023,9 +1057,11 @@ ipcMain.handle(
     audioBase64: string,
     mimeType: string,
     images?: unknown,
-    streamId?: unknown
+    streamId?: unknown,
+    origin?: unknown
   ): Promise<{ transcript: string; reply: ChatMessage }> => {
     stopSpeaking(); // le estás hablando: que no siga con lo anterior
+    const handsFree = origin === 'wake';
     let transcript = '';
     try {
       transcript = await transcribeAudio(audioBase64, mimeType);
@@ -1040,9 +1076,14 @@ ipcMain.handle(
       const chatImages = sanitizeChatImages(images);
       const live = openReplyStream(event.sender, streamId);
       live.transcript(transcript); // la ventana muestra lo que entendió antes de que llegue la respuesta
-      const reply = await sendMessage(transcript, chatImages, live.handlers);
+      const reply = await sendMessage(transcript, chatImages, live.handlers, { handsFree });
       saveExchange(transcript, chatImages.length, reply);
       live.finish(reply);
+      // Pedido por voz con la ventana oculta: la confirmación tiene que verse.
+      if (handsFree && reply.pendingConfirmation && chatWindow && !chatWindow.isDestroyed()) {
+        chatWindow.show();
+        chatWindow.focus();
+      }
       return { transcript, reply };
     } catch (err) {
       // Mismo trato que un mensaje escrito: explicación en pantalla, sin volcado técnico.
@@ -1164,12 +1205,19 @@ ipcMain.handle('alya:openStatus', async (): Promise<void> => {
 
 ipcMain.handle(
   'alya:getAppInfo',
-  async (): Promise<{ version: string; userName: string; voiceShortcut: string; screenShortcut: string }> => {
+  async (): Promise<{
+    version: string;
+    userName: string;
+    voiceShortcut: string;
+    screenShortcut: string;
+    wakeShortcut: string;
+  }> => {
     return {
       version: app.getVersion(),
       userName: loadSettings().userName,
       voiceShortcut: 'Ctrl + Shift + 1',
       screenShortcut: 'Ctrl + Shift + 2',
+      wakeShortcut: 'Ctrl + Shift + 3',
     };
   }
 );

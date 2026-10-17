@@ -24,7 +24,7 @@ const FOLDER_SHORTCUTS: Record<string, string> = {
     vídeos: 'Videos',
 };
 
-function resolveFolderPath(input: string): string {
+export function resolveFolderPath(input: string): string {
     const normalized = input.toLowerCase().trim();
     const shortcut = FOLDER_SHORTCUTS[normalized];
     if (shortcut) {

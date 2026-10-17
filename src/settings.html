@@ -429,6 +429,24 @@
         .spotify-status.error {
             color: #ff5f5f;
         }
+
+        .wake-status {
+            margin-top: 6px;
+            font-size: 12px;
+            color: #8a96a8;
+        }
+
+        .wake-status.ok {
+            color: #5ee69b;
+        }
+
+        .wake-status.warn {
+            color: #fbbf24;
+        }
+
+        .wake-status.error {
+            color: #ff5f5f;
+        }
     </style>
 </head>
 
@@ -522,6 +540,81 @@
             </div>
         </div>
 
+        <hr class="section-divider" />
+
+        <div class="section-title">Escucha activa</div>
+
+        <div class="field">
+            <label class="check-row" for="wakeEnabled">
+                <input type="checkbox" id="wakeEnabled" />
+                Responder cuando la llame
+            </label>
+            <div class="wake-status" id="wake-status"></div>
+            <div class="field-hint">ALYA escucha el micrófono esperando su nombre. El reconocimiento de la frase se
+                hace dentro de este PC: hasta que la llamas no se graba ni se envía nada. Lo que dices después
+                sí se manda para entenderlo, igual que con el botón del micrófono. También se enciende y apaga
+                con Ctrl + Shift + 3 o desde el ícono de la bandeja.</div>
+        </div>
+
+        <div class="field">
+            <label for="wakePhrases">Frases para llamarla</label>
+            <input type="text" id="wakePhrases" maxlength="120" placeholder="oye alya, hola alya" />
+            <div class="field-hint">Separadas por comas, hasta 5. Mejor de dos palabras o más: una sola palabra
+                se confunde fácil con la conversación normal.</div>
+        </div>
+
+        <div class="field">
+            <label for="wakeSensitivity">Sensibilidad</label>
+            <select id="wakeSensitivity">
+                <option value="baja">Estricta (menos falsas alarmas)</option>
+                <option value="normal">Normal</option>
+                <option value="alta">Sensible (reacciona antes, con más falsas alarmas)</option>
+            </select>
+        </div>
+
+        <div class="field">
+            <label for="wakeConversation">Seguir escuchando después de responder</label>
+            <div class="slider-row">
+                <input type="range" id="wakeConversation" min="0" max="20" step="1" />
+                <span class="slider-value" id="wakeConversationValue"></span>
+            </div>
+            <div class="field-hint">Durante estos segundos le puedes seguir hablando sin decir la frase. Si le dices
+                "gracias" o "listo", deja de esperar. 0 = siempre hay que llamarla.</div>
+        </div>
+
+        <div class="field">
+            <label for="wakeSilence">Pausa para dar por terminado lo que dices</label>
+            <div class="slider-row">
+                <input type="range" id="wakeSilence" min="0.6" max="2.5" step="0.1" />
+                <span class="slider-value" id="wakeSilenceValue"></span>
+            </div>
+            <div class="field-hint">Si te corta antes de que termines, súbelo.</div>
+        </div>
+
+        <div class="field">
+            <label class="check-row" for="wakeSound">
+                <input type="checkbox" id="wakeSound" />
+                Sonido al escucharme
+            </label>
+        </div>
+
+        <div class="field">
+            <label class="check-row" for="wakeShowWindow">
+                <input type="checkbox" id="wakeShowWindow" />
+                Mostrar la ventana cuando la llame
+            </label>
+            <div class="field-hint">Si no, responde en segundo plano y la ventana solo aparece si necesita que
+                confirmes algo.</div>
+        </div>
+
+        <div class="field">
+            <label class="check-row" for="wakePauseWhileObs">
+                <input type="checkbox" id="wakePauseWhileObs" />
+                Pausar mientras OBS está abierto
+            </label>
+            <div class="field-hint">Para que nadie del stream pueda darle órdenes diciendo su nombre.</div>
+        </div>
+
         <button id="save-btn">Guardar cambios</button>
         <div id="status-msg"></div>
 
@@ -570,6 +663,17 @@
         const noiseScaleValue = document.getElementById('noiseScaleValue');
         const noiseWValue = document.getElementById('noiseWValue');
         const volumeValue = document.getElementById('volumeValue');
+        const wakeEnabledInput = document.getElementById('wakeEnabled');
+        const wakePhrasesInput = document.getElementById('wakePhrases');
+        const wakeSensitivityInput = document.getElementById('wakeSensitivity');
+        const wakeConversationInput = document.getElementById('wakeConversation');
+        const wakeSilenceInput = document.getElementById('wakeSilence');
+        const wakeSoundInput = document.getElementById('wakeSound');
+        const wakeShowWindowInput = document.getElementById('wakeShowWindow');
+        const wakePauseWhileObsInput = document.getElementById('wakePauseWhileObs');
+        const wakeConversationValue = document.getElementById('wakeConversationValue');
+        const wakeSilenceValue = document.getElementById('wakeSilenceValue');
+        const wakeStatusEl = document.getElementById('wake-status');
         const saveBtn = document.getElementById('save-btn');
         const statusMsg = document.getElementById('status-msg');
 
@@ -578,7 +682,29 @@
             noiseScaleValue.textContent = parseFloat(noiseScaleInput.value).toFixed(2);
             noiseWValue.textContent = parseFloat(noiseWInput.value).toFixed(2);
             volumeValue.textContent = `${parseInt(volumeInput.value, 10)}%`;
+            const seconds = parseInt(wakeConversationInput.value, 10);
+            wakeConversationValue.textContent = seconds === 0 ? 'No' : `${seconds} s`;
+            wakeSilenceValue.textContent = `${parseFloat(wakeSilenceInput.value).toFixed(1)} s`;
         }
+
+        function renderWakeStatus(status) {
+            if (!status) return;
+            // Se puede prender o apagar desde el chat o la bandeja con esto abierto.
+            wakeEnabledInput.checked = status.state !== 'off';
+            const texts = {
+                off: ['Apagada.', ''],
+                loading: ['Cargando el reconocimiento de voz…', ''],
+                listening: [`Escuchando. Di "${status.phrase}".`, 'ok'],
+                paused: [status.detail, 'warn'],
+                unavailable: [status.detail, 'error'],
+            };
+            const [text, tone] = texts[status.state] || ['', ''];
+            wakeStatusEl.textContent = text;
+            wakeStatusEl.className = `wake-status ${tone}`;
+        }
+
+        window.alya.onWakeState(renderWakeStatus);
+        window.alya.getWakeStatus().then(renderWakeStatus).catch(() => { });
 
         async function loadCurrentSettings() {
             const settings = await window.alya.getSettings();
@@ -591,6 +717,14 @@
             noiseScaleInput.value = settings.noiseScale;
             noiseWInput.value = settings.noiseW;
             volumeInput.value = settings.volume ?? 100;
+            wakeEnabledInput.checked = settings.wakeEnabled === true;
+            wakePhrasesInput.value = settings.wakePhrases ?? 'oye alya, hola alya';
+            wakeSensitivityInput.value = settings.wakeSensitivity ?? 'normal';
+            wakeConversationInput.value = settings.wakeConversationSeconds ?? 8;
+            wakeSilenceInput.value = (settings.wakeSilenceMs ?? 1200) / 1000;
+            wakeSoundInput.checked = settings.wakeSound !== false;
+            wakeShowWindowInput.checked = settings.wakeShowWindow === true;
+            wakePauseWhileObsInput.checked = settings.wakePauseWhileObs === true;
             updateSliderLabels();
         }
 
@@ -598,6 +732,8 @@
         noiseScaleInput.addEventListener('input', updateSliderLabels);
         noiseWInput.addEventListener('input', updateSliderLabels);
         volumeInput.addEventListener('input', updateSliderLabels);
+        wakeConversationInput.addEventListener('input', updateSliderLabels);
+        wakeSilenceInput.addEventListener('input', updateSliderLabels);
 
         saveBtn.addEventListener('click', async () => {
             const settings = {
@@ -610,6 +746,14 @@
                 noiseScale: parseFloat(noiseScaleInput.value),
                 noiseW: parseFloat(noiseWInput.value),
                 volume: parseInt(volumeInput.value, 10),
+                wakeEnabled: wakeEnabledInput.checked,
+                wakePhrases: wakePhrasesInput.value.trim() || 'oye alya, hola alya',
+                wakeSensitivity: wakeSensitivityInput.value,
+                wakeConversationSeconds: parseInt(wakeConversationInput.value, 10),
+                wakeSilenceMs: Math.round(parseFloat(wakeSilenceInput.value) * 1000),
+                wakeSound: wakeSoundInput.checked,
+                wakeShowWindow: wakeShowWindowInput.checked,
+                wakePauseWhileObs: wakePauseWhileObsInput.checked,
             };
 
             saveBtn.disabled = true;
